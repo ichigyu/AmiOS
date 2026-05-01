@@ -1,0 +1,12 @@
+# 固定 nightly 工具链版本，确保所有开发者使用相同的编译器
+# 使用 nightly 是因为裸机开发需要 #![feature(asm_const)] 等不稳定特性
+[toolchain]
+channel = "nightly-2026-04-30"
+components = [
+    "rust-src",          # 标准库源码，用于 build-std 编译裸机目标
+    "llvm-tools-preview", # 提供 llvm-objcopy / llvm-objdump 等工具
+    "rustfmt",           # 代码格式化
+]
+targets = [
+    "aarch64-unknown-none", # ARMv8 裸机目标，无操作系统、无标准库
+]

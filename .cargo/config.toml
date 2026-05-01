@@ -1,0 +1,17 @@
+# Cargo 构建配置：指定默认编译目标和链接参数
+
+[build]
+# 默认编译目标：ARMv8 裸机，无操作系统、无标准库
+# 等效于每次 cargo build 都加 --target aarch64-unknown-none
+target = "aarch64-unknown-none"
+
+[target.aarch64-unknown-none]
+# 链接器参数：
+#   -T linker.ld  使用项目根目录的自定义链接脚本，控制内存布局
+rustflags = [
+    "-C", "link-arg=-Tlinker.ld",
+]
+
+# 使用 LLVM 的 lld 链接器（比系统 ld 更好地支持裸机目标）
+# 如果系统没有安装 lld，可以改用 aarch64-linux-gnu-ld
+linker = "rust-lld"
