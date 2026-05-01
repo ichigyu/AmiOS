@@ -14,7 +14,7 @@
 // └─────────────────────────────────────────────────────────────┘
 
 use core::fmt;
-use crate::platform::mmio::UART0_BASE;
+use crate::platform::mmio::{UART0_BASE, UART_CLK_HZ};
 
 // ── PL011 寄存器偏移量 ────────────────────────────────────────
 // 来源：ARM PrimeCell UART (PL011) 技术参考手册 r1p5
@@ -46,7 +46,7 @@ const UARTFR_TXFF: u32 = 1 << 5;
 
 // ── UARTCR 控制位 ─────────────────────────────────────────────
 /// UART 使能位（bit0）：为 1 时启用 UART
-const UARTCR_UARTEN: u32 = 1 << 0;
+const UARTCR_CTSEN: u32 = 1 << 0;
 /// 发送使能位（bit8）：为 1 时启用发送功能
 const UARTCR_TXE: u32 = 1 << 8;
 /// 接收使能位（bit9）：为 1 时启用接收功能
@@ -81,26 +81,32 @@ fn mmio_read(addr: usize) -> u32 {
 /// 初始化 PL011 UART 控制器
 ///
 /// 配置参数：波特率 115200，8 位数据位，无奇偶校验，1 位停止位（8N1）
-/// 参考时钟：QEMU virt 板 PL011 使用 24MHz 参考时钟
 ///
-/// 波特率计算：
-///   BRD = 24_000_000 / (16 * 115200) = 13.0208...
-///   IBRD = 13（整数部分）
-///   FBRD = round(0.0208 * 64) = 1（小数部分）
+/// 波特率计算公式：BRD = UART_CLK_HZ / (16 * 115200)
+///   QEMU virt（24MHz）：BRD = 13.02  → IBRD=13, FBRD=round(0.02*64)=1
+///   飞腾 D2000（48MHz）：BRD = 26.04 → IBRD=26, FBRD=round(0.04*64)=3
+/// IBRD/FBRD 由平台时钟常量在编译期计算，无需手动维护两套魔法数字
 pub fn init() {
+    // 编译期计算波特率除数，避免平台切换时遗漏更新
+    const BAUD: u32 = 115200;
+    const IBRD: u32 = UART_CLK_HZ / (16 * BAUD);
+    // FBRD = round((BRD 小数部分) * 64) = round((UART_CLK_HZ % (16*BAUD)) * 64 / (16*BAUD))
+    // 用整数运算等价：(余数 * 64 + 半个除数) / 除数，实现四舍五入
+    const FBRD: u32 = ((UART_CLK_HZ % (16 * BAUD)) * 64 + 8 * BAUD) / (16 * BAUD);
+
     // 第一步：禁用 UART，在修改配置前必须先关闭
     mmio_write(UART0_BASE + UARTCR, 0);
 
     // 第二步：设置波特率
-    mmio_write(UART0_BASE + UARTIBRD, 13); // 整数除数
-    mmio_write(UART0_BASE + UARTFBRD, 1);  // 小数除数
+    mmio_write(UART0_BASE + UARTIBRD, IBRD);
+    mmio_write(UART0_BASE + UARTFBRD, FBRD);
 
     // 第三步：配置数据格式（8N1）并启用 FIFO
     // WLEN=0b11（8位数据）| FEN=1（启用FIFO）
     mmio_write(UART0_BASE + UARTLCR_H, UARTLCR_H_WLEN_8BIT | UARTLCR_H_FEN);
 
     // 第四步：启用 UART、发送和接收功能
-    mmio_write(UART0_BASE + UARTCR, UARTCR_UARTEN | UARTCR_TXE | UARTCR_RXE);
+    mmio_write(UART0_BASE + UARTCR, UARTCR_CTSEN | UARTCR_TXE | UARTCR_RXE);
 }
 
 // ── 字符输出 ──────────────────────────────────────────────────

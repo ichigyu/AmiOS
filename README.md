@@ -61,9 +61,15 @@ AmiOS/
 
 ### 第一章：应用程序与基本执行环境（2026-05-01）
 
-- 建立 ARMv8 裸机项目骨架（Cargo 配置、链接脚本、工具链固定）
+- 建立 ARMv8 裸机项目
 - 实现 EL2 → EL1 异常级别切换（ARMv8 特有，RISC-V 原版无此步骤）
 - 实现 PL011 UART 驱动与 `print!`/`println!` 宏
 - 实现 `panic handler` 与基础运行时（`no_std`/`no_main`）
 - 实现全局分配器占位（当前不支持堆分配）
 - 通过 Cargo feature 区分 QEMU virt 与飞腾 D2000 平台
+
+### 平台适配修正（2026-05-02）
+
+- 修正飞腾 D2000 平台 UART 波特率配置：D2000 UART 时钟为 48MHz（QEMU virt 为 24MHz），对应 IBRD/FBRD 应为 26/3 而非 13/1
+- 在 `platform/mod.rs` 各平台分支中新增 `UART_CLK_HZ` 时钟常量
+- 重构 `uart::init()`：改为编译期由 `UART_CLK_HZ` 计算 IBRD/FBRD，切换平台时自动得到正确值

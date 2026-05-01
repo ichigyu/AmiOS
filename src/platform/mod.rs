@@ -32,6 +32,10 @@ pub mod mmio {
     /// 内核加载地址（_start 入口）
     /// 与链接脚本 linker.ld 中的起始地址保持一致
     pub const KERNEL_BASE: usize = 0x4008_0000;
+
+    /// PL011 UART 参考时钟频率（Hz）
+    /// QEMU virt 板固定为 24MHz（见 QEMU hw/arm/virt.c pl011_create）
+    pub const UART_CLK_HZ: u32 = 24_000_000;
 }
 
 // ── 飞腾 D2000 平台地址定义 ───────────────────────────────────
@@ -48,4 +52,8 @@ pub mod mmio {
 
     /// 飞腾 D2000 内核加载地址（待确认，参考 BSP 文档）
     pub const KERNEL_BASE: usize = 0x8008_0000;
+
+    /// PL011 UART 参考时钟频率（Hz）
+    /// 飞腾 D2000 UART 时钟为 48MHz（见飞腾 D2000 处理器技术参考手册）
+    pub const UART_CLK_HZ: u32 = 48_000_000;
 }
