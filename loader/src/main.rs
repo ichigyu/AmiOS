@@ -104,10 +104,33 @@ fn efi_main() -> Status {
     assert_eq!(bytes_read, kernel_size, "Kernel read size mismatch");
     uefi::println!("[loader] step 6/6: kernel loaded ({} bytes), jumping to 0x{:x}...", bytes_read, KERNEL_LOAD_ADDR);
 
+    // 读取当前异常级别：正常应为 EL2（值=2），EL3 说明 ATF 未正确降级
+    // CurrentEL[3:2] 是 EL 值，右移 2 位提取
+    let current_el: u64;
+    unsafe {
+        core::arch::asm!("mrs {el}, CurrentEL", el = out(reg) current_el);
+    }
+    uefi::println!("[loader] CurrentEL before exit_boot_services = {}", (current_el >> 2) & 3);
+
     // 退出 UEFI Boot Services：此后不能再调用任何 Boot Services 函数
     // exit_boot_services 内部处理内存映射 key 失效重试，调用后 UEFI 运行时不再可用
     // 返回的 MemoryMapOwned 被丢弃：内核自行管理内存，不需要 UEFI 内存映射
     unsafe { let _ = boot::exit_boot_services(MemoryType::LOADER_DATA); };
+
+    // 原因 E 排查：exit_boot_services 后直接写 UART，绕过内核 uart_init()
+    // 若此处有 'K' 输出，说明 UART 硬件和地址没问题，问题在内核启动流程
+    // 若无输出，说明 exit_boot_services 后 UART 状态异常
+    unsafe {
+        let uartfr = (0x2800_1000usize + 0x018) as *const u32;
+        let uartdr = (0x2800_1000usize + 0x000) as *mut u32;
+        // 等待发送 FIFO 不满（TXFF bit5 = 0）
+        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
+        core::ptr::write_volatile(uartdr, b'K' as u32);
+        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
+        core::ptr::write_volatile(uartdr, b'\r' as u32);
+        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
+        core::ptr::write_volatile(uartdr, b'\n' as u32);
+    }
 
     // 跳转到内核入口地址执行
     // 内核入口约定：无参数、无返回（裸机入口 _start）
