@@ -76,9 +76,29 @@ _start:
     // 执行异常返回：CPU 切换到 EL1，PC 跳转到 .el1_init
     eret
 
+// ── UART 直写辅助宏（仅用于启动阶段调试）─────────────────────
+// 在 Rust 运行时就绪之前，通过直接写 MMIO 寄存器输出单个字符
+// x20 保存 UART 基地址（callee-saved，不会被后续指令破坏）
+// 使用前需先执行 .uart_debug_init，之后用 .uart_putc 输出字符
+.macro uart_debug_init
+    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址
+.endm
+
+// 输出单个 ASCII 字符，\c 为立即数（如 '1'、'2'）
+// 轮询 UARTFR[5]（TXFF）等待发送 FIFO 不满，再写 UARTDR
+.macro uart_putc c
+    mov     w19, #\c
+99: ldr     w18, [x20, #0x18]   // 读 UARTFR
+    tbnz    w18, #5, 99b        // TXFF=1 则等待
+    str     w19, [x20, #0x00]   // 写 UARTDR
+.endm
+
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
+    // 初始化调试用 UART 基地址寄存器
+    uart_debug_init
+
     // 显式初始化 SCTLR_EL1（System Control Register）
     // UEFI 固件可能在 EL1 留下了开启 MMU、缓存或对齐检查的状态，
     // 不清零会导致内核在没有页表/异常向量的情况下触发异常后卡死。
@@ -86,12 +106,14 @@ _start:
     //         关闭对齐检查（A=0）、关闭 SP 对齐检查（SA=0）
     msr     sctlr_el1, xzr     // 清零 SCTLR_EL1，确保 MMU/cache 全部关闭
     isb                         // 指令同步屏障：确保 SCTLR_EL1 写入立即生效
+    uart_putc '1'               // 输出 '1'：SCTLR_EL1 初始化完成
 
     // 设置 EL1 栈指针
     // _stack_top 由链接脚本定义，指向 BSS 段之后的栈顶
     // ARMv8 栈向低地址增长，SP 初始化为栈顶（高地址）
     ldr     x0, =_stack_top     // 加载栈顶地址
     mov     sp, x0              // 设置栈指针
+    uart_putc '2'               // 输出 '2'：栈指针设置完成
 
     // ── 清零 BSS 段 ───────────────────────────────────────────
     // BSS 段存放未初始化的全局变量，C/Rust 语义要求它们初始值为 0
@@ -105,9 +127,11 @@ _start:
     cmp     x0, x1              // 检查是否到达 BSS 段末尾
     b.lt    .bss_loop            // 若未到末尾，继续循环
 .bss_done:
+    uart_putc '3'               // 输出 '3'：BSS 清零完成
 
     // ── 跳转到 Rust 内核主函数 ────────────────────────────────
     // kernel_main 在 kernel/src/kernel/mod.rs 中定义，标注为 -> ! 不会返回
+    uart_putc '4'               // 输出 '4'：即将跳转 kernel_main
     bl      kernel_main         // 调用 kernel_main（Branch with Link）
 
     // 理论上不会执行到这里，但以防万一加一个无限循环
