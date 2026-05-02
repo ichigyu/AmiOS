@@ -54,6 +54,7 @@ PLATFORM_STAMP := kernel/.platform_stamp
 $(PLATFORM_STAMP): FORCE
 	@if [ "$$(cat $(PLATFORM_STAMP) 2>/dev/null)" != "$(PLATFORM)" ]; then \
 		echo "$(PLATFORM)" > $(PLATFORM_STAMP); \
+		rm -f $(LINKER_OUT); \
 	fi
 
 $(LINKER_OUT): $(LINKER_SRC) $(PLATFORM_STAMP)
