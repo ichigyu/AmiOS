@@ -27,6 +27,11 @@ use uefi::{cstr16, helpers, CStr16};
 // 内核加载地址：与 D2000 平台链接脚本中的 KERNEL_BASE 一致
 const KERNEL_LOAD_ADDR: u64 = 0x80080000;
 
+// 内核栈大小：与链接脚本中预留的栈空间一致（512KB）
+// loader 必须为整个内核镜像（代码+数据+BSS+栈）分配内存，
+// 否则 SP 指向未分配区域，第一次压栈就会踩坏 UEFI 固件数据
+const KERNEL_STACK_SIZE: usize = 0x80000; // 512KB
+
 // 内核文件名：与 Makefile 中 KERNEL_BIN_NAME 一致
 const KERNEL_FILE_NAME: &CStr16 = cstr16!("amios-kernel-d2000.bin");
 
@@ -80,8 +85,9 @@ fn efi_main() -> Status {
     let kernel_size = file_info.file_size() as usize;
     uefi::println!("[loader] step 4/6: kernel file size = {} bytes", kernel_size);
 
-    // 计算需要的内存页数（UEFI 页大小为 4096 字节，向上取整）
-    let page_count = (kernel_size + 0xFFF) / 0x1000;
+    // 计算需要的内存页数：内核文件大小 + 512KB 栈空间，向上取整到页边界
+    // 必须包含栈空间，否则 SP（_stack_top）指向未分配内存，第一次压栈即崩溃
+    let page_count = (kernel_size + KERNEL_STACK_SIZE + 0xFFF) / 0x1000;
 
     // 在目标物理地址 0x80080000 分配连续物理内存页
     // AllocateType::Address 要求固件在指定地址分配，与链接脚本加载地址一致
