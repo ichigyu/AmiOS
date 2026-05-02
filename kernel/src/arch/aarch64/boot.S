@@ -109,11 +109,15 @@ _start:
     msr     elr_el2, x0         // 设置返回地址为 EL1 初始化代码
 
     // 执行异常返回：CPU 切换到 EL1，PC 跳转到 .el1_init
+    // 'E' = 0x45：eret 即将执行，若串口看到 'E' 说明 eret 前代码正常
+    uart_putc 'E'
     eret
 
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
+    // 'L' = 0x4C：已进入 .el1_init，说明 eret 成功切换到 EL1
+    uart_putc 'L'
     // 第一件事：初始化 SCTLR_EL1，必须在任何内存访问之前执行
     // 不能直接写 0：SCTLR_EL1 有 RES1 位（ARMv8 规范要求必须为 1），
     // 写 0 会导致 UNPREDICTABLE 行为，在 QEMU 和真实硬件上都可能卡死。
