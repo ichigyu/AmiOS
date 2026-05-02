@@ -118,18 +118,15 @@ fn efi_main() -> Status {
     unsafe { let _ = boot::exit_boot_services(MemoryType::LOADER_DATA); };
 
     // 原因 E 排查：exit_boot_services 后直接写 UART，绕过内核 uart_init()
-    // 若此处有 'K' 输出，说明 UART 硬件和地址没问题，问题在内核启动流程
+    // 若此处有输出，说明 UART 硬件和地址没问题，问题在内核启动流程
     // 若无输出，说明 exit_boot_services 后 UART 状态异常
     unsafe {
         let uartfr = (0x2800_1000usize + 0x018) as *const u32;
         let uartdr = (0x2800_1000usize + 0x000) as *mut u32;
-        // 等待发送 FIFO 不满（TXFF bit5 = 0）
-        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
-        core::ptr::write_volatile(uartdr, b'K' as u32);
-        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
-        core::ptr::write_volatile(uartdr, b'\r' as u32);
-        while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
-        core::ptr::write_volatile(uartdr, b'\n' as u32);
+        for &byte in b"[loader] UART direct write ok, jumping to kernel...\r\n" {
+            while core::ptr::read_volatile(uartfr) & (1 << 5) != 0 {}
+            core::ptr::write_volatile(uartdr, byte as u32);
+        }
     }
 
     // 跳转到内核入口地址执行

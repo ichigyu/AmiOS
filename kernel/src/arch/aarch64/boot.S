@@ -79,6 +79,14 @@ _start:
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
+    // 显式初始化 SCTLR_EL1（System Control Register）
+    // UEFI 固件可能在 EL1 留下了开启 MMU、缓存或对齐检查的状态，
+    // 不清零会导致内核在没有页表/异常向量的情况下触发异常后卡死。
+    // 写入 0：关闭 MMU（M=0）、关闭 D-cache（C=0）、关闭 I-cache（I=0）、
+    //         关闭对齐检查（A=0）、关闭 SP 对齐检查（SA=0）
+    msr     sctlr_el1, xzr     // 清零 SCTLR_EL1，确保 MMU/cache 全部关闭
+    isb                         // 指令同步屏障：确保 SCTLR_EL1 写入立即生效
+
     // 设置 EL1 栈指针
     // _stack_top 由链接脚本定义，指向 BSS 段之后的栈顶
     // ARMv8 栈向低地址增长，SP 初始化为栈顶（高地址）
