@@ -39,14 +39,17 @@
 .macro uart_debug_init
     ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址（ttyAMA0）
 .endm
+// uart_putc：轮询 TXFF（bit5），等待发送 FIFO 有空间后写入字符
+// 使用 x19/x18 作为临时寄存器，x20 须已由 uart_debug_init 初始化
+// 用 \@ 生成每次展开唯一的标号，避免重复定义错误
 .macro uart_putc c
     mov     w19, #\c
-99: ldr     w18, [x20, #0x18]   // 读 UARTFR
-    tbnz    w18, #5, 99b        // TXFF（bit5）=1 则等待发送 FIFO 有空间
-    str     w19, [x20, #0x00]   // 写 UARTDR，发送字符
+.Ltxwait_\@:
+    ldr     w18, [x20, #0x18]
+    tbnz    w18, #5, .Ltxwait_\@
+    str     w19, [x20, #0x00]
 .endm
 .else
-// QEMU 或其他平台：调试宏展开为空，不产生任何指令
 .macro uart_debug_init
 .endm
 .macro uart_putc c
@@ -57,6 +60,10 @@
 // 固件加载内核后，所有 CPU 核心都会从这里开始执行
 // 我们只让 CPU0 继续，其余核心进入低功耗等待状态
 _start:
+    // 最先初始化调试 UART 基地址寄存器（x20），后续所有 uart_putc 依赖它
+    // 必须在任何 uart_putc 调用之前执行，包括 .el2_to_el1 中的探针
+    uart_debug_init
+
     // 读取当前 CPU 编号（MPIDR_EL1 寄存器的低 8 位是 CPU ID）
     mrs     x0, mpidr_el1       // 读取多处理器亲和寄存器
     and     x0, x0, #0xFF       // 提取 Aff0 字段（CPU 编号）
@@ -146,8 +153,7 @@ _start:
     msr     cpacr_el1, x0
     isb
 
-    // 初始化调试用 UART 基地址寄存器（D2000 平台有效，其他平台为空操作）
-    uart_debug_init
+    // x20 已在 _start 开头由 uart_debug_init 初始化，此处直接使用
     uart_putc '1'                // 输出 '1'：系统寄存器初始化完成
 
     // 设置 EL1 栈指针
