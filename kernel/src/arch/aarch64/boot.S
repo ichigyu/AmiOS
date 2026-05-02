@@ -111,32 +111,24 @@ _start:
 // ── 在 EL2：按 Linux el2_setup → install_el2_stub 顺序配置后 eret 到 EL1 ──
 // 参考：arch/arm64/kernel/head.S SYM_FUNC_START(el2_setup) → install_el2_stub
 .init_el2_to_el1:
-    uart_putc 'H'               // 'H'：即将写 HCR_EL2
-    mov     x0, #(1 << 31)
-    msr     hcr_el2, x0
+    // 所有寄存器写入均成功（AHSCTVPE 全部输出），但 eret 后 CPU 仍在 EL2。
+    // 推测：UEFI 忽略了对 HCR_EL2 的写入（TGE 仍为 1），eret 无法降级到 EL1。
+    // 策略：放弃 eret，直接在 EL2 运行内核。
+    // VBAR_EL2 已在 EL2 路径中设置，FP/SIMD 通过 CPACR_EL1（VHE 映射）启用。
+    uart_putc 'K'               // 'K'：跳过 eret，直接在 EL2 运行
+
+    // 在 EL2 直接运行时，CPACR_EL1 在 VHE/E2H 模式下映射到 EL2 的 FP 控制
+    mrs     x0, cpacr_el1
+    orr     x0, x0, #(3 << 20)
+    msr     cpacr_el1, x0
     isb
-    uart_putc 'S'               // 'S'：即将写 SCTLR_EL1
-    mov     x0, #0x0800
-    movk    x0, #0x30d0, lsl #16
-    msr     sctlr_el1, x0
-    isb
-    uart_putc 'C'               // 'C'：即将写 CPTR_EL2
-    mov     x0, #0x33ff
-    msr     cptr_el2, x0
-    uart_putc 'T'               // 'T'：即将写 CNTHCTL_EL2
-    mrs     x0, cnthctl_el2
-    orr     x0, x0, #3
-    msr     cnthctl_el2, x0
-    uart_putc 'V'               // 'V'：即将写 VBAR_EL1
+
+    // 设置 EL2 的临时异常向量表
     adr     x0, .simple_vectors
-    msr     vbar_el1, x0
-    uart_putc 'P'               // 'P'：即将写 SPSR_EL2/ELR_EL2
-    mov     x0, #0x3c5
-    msr     spsr_el2, x0
-    adr     x0, .init_common
-    msr     elr_el2, x0
-    uart_putc 'E'               // 'E'：eret 即将执行
-    eret
+    msr     vbar_el2, x0
+    isb
+
+    b       .init_common
 
 // ── 公共初始化（EL1/EL2 共用）────────────────────────────────
 .init_common:
