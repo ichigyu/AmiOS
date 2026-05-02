@@ -71,101 +71,84 @@ _start:
 
     // ── 检测当前异常级别 ──────────────────────────────────────
     // ARMv8 有 EL0（用户态）、EL1（内核态）、EL2（虚拟机监控）、EL3（安全监控）
-    // QEMU virt 默认从 EL2 启动；部分真实硬件固件在 EL1 交接
+    // QEMU virt 默认从 EL2 启动；D2000 固件也在 EL2 交接
+    // 策略：无论 EL2 还是 EL1 都直接进入 .el_init，不做 EL2→EL1 切换
+    // 原因：飞腾 EDK2 的 EL2 环境下 eret 无法正常降级到 EL1（被固件拦截），
+    //       直接在 EL2 运行内核是最可靠的方案
     mrs     x0, CurrentEL       // 读取当前异常级别寄存器
     lsr     x0, x0, #2          // CurrentEL[3:2] 是 EL 值，右移 2 位提取
     and     x0, x0, #3          // 屏蔽高位，只保留 EL 值（0~3）
     cmp     x0, #3              // 判断是否在 EL3
     b.eq    .el3_halt            // EL3 不支持，跳转到停机循环
-    cmp     x0, #2              // 判断是否在 EL2
-    b.eq    .el2_to_el1         // 若在 EL2，执行降级切换
-    // 若已在 EL1（某些固件直接在 EL1 交接），直接跳到 EL1 初始化
-    b       .el1_init
+    // EL2 或 EL1 均直接进入初始化，不尝试 eret 降级
+    b       .el_init
 
-// ── EL2 → EL1 切换 ───────────────────────────────────────────
-// 通过配置系统寄存器后执行 ERET 指令，模拟从 EL2 异常返回到 EL1
-.el2_to_el1:
-    // 配置 HCR_EL2（Hypervisor Configuration Register）
-    // 读-改-写，保留 UEFI 设置的其他位，只确保 RW=1
-    // 同时清除可能导致 EL1 系统寄存器访问陷入的位：
-    //   bit31 (RW)   = 1：EL1 运行在 AArch64 模式（而非 AArch32）
-    //   bit30 (TRVM) = 0：不陷入 EL1 读取虚拟内存控制寄存器（如 SCTLR_EL1）
-    //   bit26 (TVM)  = 0：不陷入 EL1 写入虚拟内存控制寄存器
-    // D2000 固件可能设置了 TRVM/TVM，导致 EL1 执行 mrs SCTLR_EL1 时陷入 EL2
-    mrs     x0, hcr_el2
-    orr     x0, x0, #(1 << 31)     // RW=1，EL1 使用 64 位模式
-    bic     x0, x0, #(1 << 30)     // TRVM=0：允许 EL1 读取虚拟内存控制寄存器
-    bic     x0, x0, #(1 << 26)     // TVM=0：允许 EL1 写入虚拟内存控制寄存器
-    msr     hcr_el2, x0
+// ── 内核初始化（EL2 或 EL1 均可）────────────────────────────
+// D2000 固件在 EL2 交接，QEMU 也在 EL2 交接。
+// 不做 eret 降级，直接在当前 EL 初始化并运行内核。
+// EL2 和 EL1 的系统寄存器名称不同，用条件分支分别处理。
+.el_init:
+    uart_putc 'A'               // 输出 'A'：进入 .el_init
 
-    // 配置 SPSR_EL2（Saved Program Status Register）
-    // 这是 ERET 后 PSTATE 的值：
-    //   bit9 (D) = 1：调试异常屏蔽（防止固件开启的调试异常在 EL1 触发）
-    //   bit8 (A) = 1：SError 异常屏蔽
-    //   bit7 (I) = 1：IRQ 中断屏蔽（暂时关闭，后续章节开启）
-    //   bit6 (F) = 1：FIQ 中断屏蔽
-    //   bit4 (M[4]) = 0：AArch64 模式
-    //   bit3:0 (M[3:0]) = 0101：EL1h（EL1 使用 SP_EL1 作为栈指针）
-    // 0x3C5 = 0b1111000101：D/A/I/F 全部屏蔽（bit6~9），EL1h 模式
-    mov     x0, #0x3C5          // EL1h 模式 + D/A/I/F 全部屏蔽
-    msr     spsr_el2, x0        // 写入 SPSR_EL2
+    // 重新读取当前 EL，决定使用哪套系统寄存器
+    mrs     x1, CurrentEL
+    lsr     x1, x1, #2
+    and     x1, x1, #3          // x1 = 当前 EL（1 或 2）
+    cmp     x1, #2
+    b.eq    .init_el2
 
-    // 配置 ELR_EL2（Exception Link Register）
-    // ERET 执行后，PC 跳转到 ELR_EL2 指向的地址
-    adr     x0, .el1_init       // 计算 .el1_init 标签的绝对地址
-    msr     elr_el2, x0         // 设置返回地址为 EL1 初始化代码
-
-    // 执行异常返回：CPU 切换到 EL1，PC 跳转到 .el1_init
-    // 'E' = 0x45：eret 即将执行，若串口看到 'E' 说明 eret 前代码正常
-    uart_putc 'E'
-    eret
-
-// ── EL1 初始化 ────────────────────────────────────────────────
-// 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
-.el1_init:
-    // 'L' = 0x4C：已进入 .el1_init，说明 eret 成功切换到 EL1
-    uart_putc 'L'
-    // 第一件事：初始化 SCTLR_EL1，必须在任何内存访问之前执行
-    // 不能直接写 0：SCTLR_EL1 有 RES1 位（ARMv8 规范要求必须为 1），
-    // 写 0 会导致 UNPREDICTABLE 行为，在 QEMU 和真实硬件上都可能卡死。
-    // 正确做法：先读出当前值，再清除需要关闭的位，保留 RES1 位。
-    // 关闭：M(0)=MMU, A(1)=对齐检查, C(2)=D-cache, I(12)=I-cache
+// ── EL1 路径：初始化 EL1 系统寄存器 ─────────────────────────
+.init_el1:
+    // SCTLR_EL1：关闭 MMU/Cache，保留 RES1 位
     mrs     x0, sctlr_el1
     bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
     bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
     bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
     bic     x0, x0, #(1 << 12)  // I=0：关闭 I-cache
     msr     sctlr_el1, x0
-    isb                          // 指令同步屏障：确保立即生效
-
-    // 设置临时异常向量表
-    // UEFI 退出后 VBAR_EL1 仍指向已失效的 UEFI 异常向量表。
-    // 内核在 EL1 执行时，任何异常都会跳到无效地址卡死且无输出。
-    // 在栈和 BSS 就绪之前，先设置一个简单的死循环向量表兜底。
+    isb
+    // VBAR_EL1：设置临时异常向量表，防止异常跳飞
     adr     x0, .simple_vectors
     msr     vbar_el1, x0
     isb
-
-    // 允许 EL1 访问 FP/SIMD（CPACR_EL1.FPEN = 0b11）
-    // Rust 编译器优化可能生成 NEON 指令，若 FPEN=0 则触发陷入异常。
-    // 陷入后因 VBAR_EL1 无效（上一步已修复）或向量表未完善而卡死。
-    mov     x0, #(3 << 20)      // FPEN[21:20]=11：EL0/EL1 均可访问 FP/SIMD
+    // CPACR_EL1：允许 FP/SIMD，防止 Rust 编译器生成的 NEON 指令陷入
+    mov     x0, #(3 << 20)
     msr     cpacr_el1, x0
     isb
+    b       .init_common
 
-    // x20 已在 _start 开头由 uart_debug_init 初始化，此处直接使用
-    uart_putc '1'                // 输出 '1'：系统寄存器初始化完成
+// ── EL2 路径：初始化 EL2 系统寄存器 ─────────────────────────
+.init_el2:
+    // SCTLR_EL2：关闭 MMU/Cache，保留 RES1 位
+    // EL2 的 SCTLR 布局与 EL1 相同（M/A/C/I 位位置一致）
+    mrs     x0, sctlr_el2
+    bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
+    bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
+    bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
+    bic     x0, x0, #(1 << 12)  // I=0：关闭 I-cache
+    msr     sctlr_el2, x0
+    isb
+    // VBAR_EL2：设置临时异常向量表，防止异常跳飞
+    adr     x0, .simple_vectors
+    msr     vbar_el2, x0
+    isb
+    // EL2 没有 CPACR_EL2，FP/SIMD 访问由 CPTR_EL2 控制
+    // CPTR_EL2.TFP（bit10）= 0：允许 EL2 访问 FP/SIMD（默认值，通常已是 0）
+    mrs     x0, cptr_el2
+    bic     x0, x0, #(1 << 10)  // TFP=0：不陷入 FP/SIMD 指令
+    msr     cptr_el2, x0
+    isb
 
-    // 设置 EL1 栈指针
-    // _stack_top 由链接脚本定义，指向 BSS 段之后的栈顶
-    // ARMv8 栈向低地址增长，SP 初始化为栈顶（高地址）
+// ── 公共初始化（EL1/EL2 共用）────────────────────────────────
+.init_common:
+    uart_putc '1'               // 输出 '1'：系统寄存器初始化完成
+
+    // 设置栈指针（_stack_top 由链接脚本定义，ARMv8 栈向低地址增长）
     ldr     x0, =_stack_top
     mov     sp, x0
     uart_putc '2'               // 输出 '2'：栈指针设置完成
 
-    // ── 清零 BSS 段 ───────────────────────────────────────────
-    // BSS 段存放未初始化的全局变量，C/Rust 语义要求它们初始值为 0
-    // 但硬件上电后内存内容不确定，必须手动清零
+    // 清零 BSS 段（未初始化全局变量，C/Rust 语义要求初始值为 0）
     ldr     x0, =_start_bss
     ldr     x1, =_end_bss
     cmp     x0, x1
