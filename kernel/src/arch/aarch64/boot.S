@@ -78,30 +78,42 @@ _start:
 
 // ── UART 直写辅助宏（仅用于启动阶段调试）─────────────────────
 // 在 Rust 运行时就绪之前，通过直接写 MMIO 寄存器输出单个字符
-// x20 保存 UART 基地址（callee-saved，不会被后续指令破坏）
-// 使用前需先执行 .uart_debug_init，之后用 .uart_putc 输出字符
+// 通过 Makefile 传入 --defsym PHYTIUM_D2000=1 控制是否启用，
+// 避免 QEMU 上访问 D2000 的 UART 地址（0x28001000）触发异常卡死
+.ifdef PHYTIUM_D2000
 .macro uart_debug_init
-    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址
+    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址（ttyAMA0）
 .endm
-
-// 输出单个 ASCII 字符，\c 为立即数（如 '1'、'2'）
-// 轮询 UARTFR[5]（TXFF）等待发送 FIFO 不满，再写 UARTDR
 .macro uart_putc c
     mov     w19, #\c
 99: ldr     w18, [x20, #0x18]   // 读 UARTFR
     tbnz    w18, #5, 99b        // TXFF=1 则等待
     str     w19, [x20, #0x00]   // 写 UARTDR
 .endm
+.else
+// QEMU 或其他平台：调试宏展开为空，不产生任何指令
+.macro uart_debug_init
+.endm
+.macro uart_putc c
+.endm
+.endif
 
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
-    // 第一件事：清零 SCTLR_EL1，必须在任何内存访问之前执行
-    // UEFI 固件可能在 EL1 留下了开启 MMU、缓存或对齐检查的状态。
-    // 若不先清零，下面的 ldr（literal pool 访问）就可能触发对齐异常卡死。
-    // 写入 0：关闭 MMU（M=0）、D-cache（C=0）、I-cache（I=0）、对齐检查（A=0）
-    msr     sctlr_el1, xzr      // 清零 SCTLR_EL1
-    isb                          // 指令同步屏障：确保立即生效，后续指令在新状态下执行
+    // 第一件事：初始化 SCTLR_EL1，必须在任何内存访问之前执行
+    // 不能直接写 0：SCTLR_EL1 有 RES1 位（ARMv8 规范要求必须为 1），
+    // 写 0 会导致 UNPREDICTABLE 行为，在 QEMU 和真实硬件上都可能卡死。
+    // 正确做法：先读出当前值，再清除需要关闭的位，保留 RES1 位。
+    // 关闭：M(0)=MMU, A(1)=对齐检查, C(2)=D-cache, I(12)=I-cache
+    mrs     x0, sctlr_el1
+    // 清除 M|A|C|I 四位，其余位（包括 RES1）保持不变
+    bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
+    bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
+    bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
+    bic     x0, x0, #(1 << 12)  // I=0：关闭 I-cache
+    msr     sctlr_el1, x0
+    isb                          // 指令同步屏障：确保立即生效
 
     // 初始化调试用 UART 基地址寄存器（SCTLR 清零后才能安全访问 literal pool）
     uart_debug_init

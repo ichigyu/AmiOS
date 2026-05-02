@@ -20,10 +20,12 @@ ifeq ($(PLATFORM),PHYTIUM_D2000)
   CARGO_FEATURES := --no-default-features --features phytium-d2000
   KERNEL_BIN_NAME := amios-kernel-d2000.bin
   LINKER_SCRIPT := kernel/linker-d2000.lds
+  ASM_DEFS := -Wa,--defsym,PHYTIUM_D2000=1
 else
   CARGO_FEATURES :=
   KERNEL_BIN_NAME := amios-kernel-qemu.bin
   LINKER_SCRIPT := kernel/linker-qemu.lds
+  ASM_DEFS :=
 endif
 
 # ── 工具链配置 ────────────────────────────────────────────────
@@ -48,7 +50,8 @@ all: build
 # 直接用平台对应的链接脚本，不需要预处理
 # RUSTFLAGS 通过环境变量传入链接脚本路径，覆盖 .cargo/config.toml 中的默认值
 build:
-	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT)" cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
+	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT) $(ASM_DEFS)" \
+		cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 	@echo "Build complete (PLATFORM=$(PLATFORM)):"
 	@echo "  ELF: $(KERNEL_ELF)"
