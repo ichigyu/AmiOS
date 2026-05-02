@@ -108,46 +108,51 @@ _start:
     isb
     b       .init_common
 
-// ── 在 EL2：按飞腾 SDK El2Entry 顺序配置后 eret 到 EL1 ──────
-// 参考：phytium-standalone-sdk/arch/armv8/aarch64/gcc/fboot.S El2Entry
+// ── 在 EL2：按 Linux el2_setup → install_el2_stub 顺序配置后 eret 到 EL1 ──
+// 参考：arch/arm64/kernel/head.S SYM_FUNC_START(el2_setup) → install_el2_stub
 .init_el2_to_el1:
-    // HCR_EL2.RW=1：EL1 运行在 AArch64 模式
-    mov     x0, #(1 << 31)
+    // HCR_EL2：直接覆写（不读-改-写），清除 UEFI 可能设置的 TGE 等位
+    // HCR_RW（bit31）=1：EL1 运行 AArch64
+    // HCR_API（bit41）=1, HCR_APK（bit40）=1：指针认证相关，保持安全
+    // 不含 TGE（bit27）：TGE=1 时 eret 到 EL1 是 UNPREDICTABLE
+    // 0x80000000 = HCR_RW only（简化版，与 Linux HCR_HOST_NVHE_FLAGS 等效核心）
+    mov     x0, #(1 << 31)          // HCR_RW=1，其余位清零（含 TGE=0）
     msr     hcr_el2, x0
+    isb
 
-    // SCTLR_EL1：在 EL2 里预先关闭 EL1 的 MMU/Cache（合法，eret 前在 EL2 可写）
-    mrs     x0, sctlr_el1
-    bic     x0, x0, #(1 << 0)   // M=0
-    bic     x0, x0, #(1 << 1)   // A=0
-    bic     x0, x0, #(1 << 2)   // C=0
-    bic     x0, x0, #(1 << 12)  // I=0
+    // SCTLR_EL1：直接写入含 RES1 的安全初始值，不读-改-写
+    // 读-改-写在 UEFI EL2 环境下可能触发陷入（TRVM/TVM 位）
+    // 0x30d00800 = SCTLR_EL1_RES1（ARMv8 规范要求的 RES1 位集合）
+    // 效果：MMU 关，Cache 关，对齐检查关，保留所有 RES1 位
+    mov     x0, #0x0800
+    movk    x0, #0x30d0, lsl #16    // x0 = 0x30d00800 = SCTLR_EL1_RES1
     msr     sctlr_el1, x0
     isb
 
-    // CNTHCTL_EL2：允许 EL1/EL0 访问物理计时器和计数器
-    // 飞腾 SDK 设置此寄存器为 0x3；若不设置，EL1 访问计时器会陷入 EL2
-    // bit0 (EL1PCTEN)=1：允许 EL1/EL0 读取 CNTPCT_EL0
-    // bit1 (EL1PCEN) =1：允许 EL1/EL0 访问物理计时器
-    mov     x0, #0x3
+    // CPTR_EL2：禁用所有协处理器/FP/SIMD 陷入到 EL2
+    // 0x33ff = Linux install_el2_stub 的值，禁用所有 coprocessor traps
+    mov     x0, #0x33ff
+    msr     cptr_el2, x0
+
+    // CNTHCTL_EL2：允许 EL1/EL0 访问物理计时器
+    mrs     x0, cnthctl_el2
+    orr     x0, x0, #3              // EL1PCTEN=1, EL1PCEN=1
     msr     cnthctl_el2, x0
 
-    // VBAR_EL1：设置临时异常向量表（在 EL2 里预设，eret 后 EL1 立即生效）
+    // VBAR_EL1：设置临时异常向量表（在 EL2 里预设，eret 后立即生效）
     adr     x0, .simple_vectors
     msr     vbar_el1, x0
 
-    // CPACR_EL1：允许 FP/SIMD（在 EL2 里预设）
-    mov     x0, #(3 << 20)
-    msr     cpacr_el1, x0
-
-    // SPSR_EL2：eret 后的 PSTATE，EL1h 模式，D/A/I/F 全部屏蔽
-    mov     x0, #0x3C5          // 0b1111000101：EL1h + DAIF 屏蔽
+    // SPSR_EL2：EL1h 模式，D/A/I/F 全部屏蔽
+    // PSR_MODE_EL1h=0x5, PSR_D=0x200, PSR_A=0x100, PSR_I=0x80, PSR_F=0x40
+    mov     x0, #(0x5 | 0x1c0 | 0x200) // EL1h + DAIF = 0x3c5
     msr     spsr_el2, x0
 
-    // ELR_EL2：eret 后跳转到 .init_common（已完成所有 EL1 预配置）
+    // ELR_EL2：eret 后跳转到 .init_common
     adr     x0, .init_common
     msr     elr_el2, x0
 
-    uart_putc 'E'               // 'E'：eret 即将执行
+    uart_putc 'E'
     eret
 
 // ── 公共初始化（EL1/EL2 共用）────────────────────────────────
