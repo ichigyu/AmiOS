@@ -26,6 +26,7 @@ make debug
 |---|---|
 | `make build` | 编译内核（QEMU virt，默认） |
 | `make build PLATFORM=PHYTIUM_D2000` | 编译内核（飞腾 D2000） |
+| `make loader` | 编译 UEFI 加载器（飞腾 D2000 用，产物 `loader.efi`） |
 | `make run` | 在 QEMU virt 中运行 |
 | `make debug` | 启动 QEMU 等待 GDB 连接（端口 1234） |
 | `make objdump` | 反汇编查看生成代码 |
@@ -41,44 +42,45 @@ make debug
 
 切换平台：`make build PLATFORM=PHYTIUM_D2000`
 
-## 飞腾 D2000 — U-Boot 启动流程
+## 飞腾 D2000 — UEFI 加载器启动流程
 
-### 准备 SD 卡
+飞腾 D2000 通过 UEFI 固件启动，UEFI Shell 只能执行 `.efi` 文件，无法直接加载裸机二进制。`loader/` crate 提供一个极简 UEFI 加载器解决此问题。
 
-将 `amios-kernel-d2000.bin`（`make build PLATFORM=PHYTIUM_D2000` 产物）复制到 SD 卡的 FAT 分区：
+### 编译
 
 ```bash
-# 假设 SD 卡 FAT 分区挂载在 /mnt/sdcard
-cp target/aarch64-unknown-none/release/amios-kernel-d2000.bin /mnt/sdcard/
+make build PLATFORM=PHYTIUM_D2000   # 编译内核二进制
+make loader                          # 编译 UEFI 加载器
 ```
 
-### 打断 U-Boot 自动启动
+产物：
+- `target/aarch64-unknown-none/release/amios-kernel-d2000.bin`
+- `target/aarch64-unknown-uefi/release/loader.efi`
 
-上电后，U-Boot 会显示倒计时（通常 3 秒）。在倒计时结束前按任意键进入 U-Boot 命令行：
+### 通过 TFTP 启动
 
-```
-Hit any key to stop autoboot:  3
-=>
-```
+在开发机上启动 TFTP 服务，将两个产物放入 TFTP 根目录：
 
-### 加载并运行 AmiOS
-
-在 U-Boot 命令行执行：
-
-```
-# 从 SD 卡 FAT 分区加载内核到内存
-# 参数：设备:分区  目标地址  文件名
-fatload mmc 0:1 0x80080000 amios-kernel-d2000.bin
-
-# 跳转到内核入口地址执行
-go 0x80080000
+```bash
+cp target/aarch64-unknown-none/release/amios-kernel-d2000.bin /srv/tftp/
+cp target/aarch64-unknown-uefi/release/loader.efi /srv/tftp/
 ```
 
-加载地址 `0x80080000` 必须与链接脚本中的 `KERNEL_BASE` 一致。
+在 UEFI Shell 中配置网络并下载文件：
 
-### 恢复 Linux 自动启动
+```
+# 初始化网卡（接口编号视实际情况而定）
+ifconfig -s eth0 dhcp
 
-不打断倒计时，U-Boot 将自动启动原有的 Linux 系统，AmiOS 不影响正常使用。
+# 从 TFTP 服务器下载加载器和内核（将 <TFTP_SERVER_IP> 替换为实际地址）
+tftp <TFTP_SERVER_IP> loader.efi
+tftp <TFTP_SERVER_IP> amios-kernel-d2000.bin
+
+# 执行加载器
+loader.efi
+```
+
+加载器自动完成：读取内核 → 复制到 `0x80080000` → 退出 Boot Services → 跳转执行。内核启动后串口输出启动信息。
 
 ## 项目结构
 
@@ -103,6 +105,11 @@ AmiOS/
 │       └── kernel/
 │           ├── mod.rs       panic handler、全局分配器占位、kernel_main
 │           └── io.rs        print!/println! 宏
+├── loader/                  UEFI 加载器 crate（飞腾 D2000 用）
+│   ├── Cargo.toml           依赖 uefi crate，目标 aarch64-unknown-uefi
+│   ├── .cargo/config.toml   默认编译目标 aarch64-unknown-uefi
+│   └── src/
+│       └── main.rs          UEFI 入口：读取内核 → 复制到 0x80080000 → 跳转执行
 ├── user/                    用户态程序（第五章实现，当前占位）
 ├── tests/                   host 单元测试 crate
 │   └── src/lib.rs           波特率常量等纯逻辑验证
@@ -130,7 +137,6 @@ AmiOS/
 - boot.S 新增 EL3 检测分支，EL3 入口跳转到死循环停机，避免静默跑飞（ARMv8 特有）
 - 启动横幅和 panic 消息改为纯 ASCII 英文，平台名称改用 `bsp::BOARD_NAME` 常量
 - Makefile 引入 `PLATFORM` 变量统一控制 feature flag、链接脚本预处理宏，`make build PLATFORM=PHYTIUM_D2000` 产出 D2000 裸机二进制
-- 新增 U-Boot 手动加载流程文档（`fatload` + `go` 命令）
 
 - 建立 Cargo workspace 顶层结构，区分 `kernel/`（内核）、`user/`（用户态占位）、`tests/`（测试）
 - 内核 `src/` 按职责分层：`arch/aarch64/`（启动代码）、`drivers/uart/`（UART 驱动）、`kernel/`（核心基础设施）、`platform/`（MMIO 常量）
@@ -141,3 +147,10 @@ AmiOS/
 - 修正飞腾 D2000 平台 UART 波特率配置：D2000 UART 时钟为 48MHz（QEMU virt 为 24MHz），对应 IBRD/FBRD 应为 26/3 而非 13/1
 - 在 `platform/mod.rs` 各平台分支中新增 `UART_CLK_HZ` 时钟常量
 - 重构 `uart::init()`：改为编译期由 `UART_CLK_HZ` 计算 IBRD/FBRD，切换平台时自动得到正确值
+
+### UEFI 加载器（2026-05-02）
+
+- 新增 `loader/` crate，编译目标 `aarch64-unknown-uefi`，产物为 `loader.efi`（PE/COFF 格式）
+- 实现从 EFI 简单文件系统读取 `amios-kernel-d2000.bin`，复制到 `0x80080000`，调用 `ExitBootServices()` 后跳转执行内核
+- Makefile 新增 `make loader` 构建目标
+- 新增 UEFI Shell 启动流程文档（`FS0:\loader.efi` 一键启动）

@@ -4,6 +4,7 @@
 # 用法：
 #   make build                        编译内核（QEMU virt，默认）
 #   make build PLATFORM=PHYTIUM_D2000 编译内核（飞腾 D2000）
+#   make loader                       编译 UEFI 加载器（D2000 用）
 #   make run                          在 QEMU 中运行内核
 #   make debug                        启动 QEMU 等待 GDB 连接（端口 1234）
 #   make objdump                      反汇编查看生成代码
@@ -24,10 +25,11 @@ else
 endif
 
 # ── 工具链配置 ────────────────────────────────────────────────
-# 使用 LLVM 工具链，与 Rust 工具链配套，无需单独安装交叉编译器
-CC      := clang
-OBJCOPY := llvm-objcopy
-OBJDUMP := llvm-objdump
+# 链接脚本预处理用系统 C 编译器（gcc/clang 均可，只用 -E 预处理功能）
+# objcopy/objdump 用 LLVM 工具链，与 Rust 工具链配套
+CC      := $(shell which clang 2>/dev/null || which gcc)
+OBJCOPY := rust-objcopy
+OBJDUMP := rust-objdump
 
 # ── 编译目标与产物路径 ────────────────────────────────────────
 TARGET      := aarch64-unknown-none
@@ -38,7 +40,7 @@ LINKER_OUT  := kernel/linker.lds
 CARGO_FLAGS := --manifest-path kernel/Cargo.toml
 
 # ── 默认目标 ──────────────────────────────────────────────────
-.PHONY: all build run debug objdump clean
+.PHONY: all build loader run debug objdump clean
 
 all: build
 
@@ -56,6 +58,18 @@ build: $(LINKER_OUT)
 	@echo "Build complete (PLATFORM=$(PLATFORM)):"
 	@echo "  ELF: $(KERNEL_ELF)"
 	@echo "  BIN: $(KERNEL_BIN)"
+
+# ── 编译 UEFI 加载器（飞腾 D2000 用）────────────────────────────
+# 产物：target/aarch64-unknown-uefi/release/loader.efi
+# 使用方法：将 loader.efi 和 amios-kernel-d2000.bin 复制到 FAT 分区，
+#           在 UEFI Shell 中执行 FS0:\loader.efi 即可启动内核
+LOADER_EFI := target/aarch64-unknown-uefi/release/loader.efi
+
+loader:
+	# 显式指定目标覆盖 workspace 根 .cargo/config.toml 中的 aarch64-unknown-none 默认值
+	cargo build --release --manifest-path loader/Cargo.toml --target aarch64-unknown-uefi
+	@echo "Loader build complete:"
+	@echo "  EFI: $(LOADER_EFI)"
 
 # ── 在 QEMU 中运行 ────────────────────────────────────────────
 # QEMU 参数说明：
@@ -112,5 +126,6 @@ test:
 # ── 清理构建产物 ──────────────────────────────────────────────
 clean:
 	cargo clean $(CARGO_FLAGS)
+	cargo clean --manifest-path loader/Cargo.toml
 	rm -f $(LINKER_OUT)
 	@echo "Clean complete"

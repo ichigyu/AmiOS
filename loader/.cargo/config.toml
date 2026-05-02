@@ -1,0 +1,6 @@
+# 注意：workspace 根 .cargo/config.toml 将默认目标设为 aarch64-unknown-none，
+# 会覆盖此处的配置。实际编译时 Makefile 通过 --target aarch64-unknown-uefi 显式指定。
+# 此文件保留作为文档说明 loader crate 的预期编译目标。
+[build]
+# UEFI 应用编译目标：生成 PE/COFF 格式的 .efi 文件，符合 UEFI 规范
+target = "aarch64-unknown-uefi"
