@@ -34,10 +34,11 @@ const KERNEL_FILE_NAME: &CStr16 = cstr16!("amios-kernel-d2000.bin");
 // FileInfo 固定部分约 80 字节，文件名最多 256 * 2 = 512 字节
 const FILE_INFO_BUF_SIZE: usize = 600;
 
-// UEFI 环境下的 panic handler：输出错误信息后停机
-// 不能使用 std，因此需要手动实现
+// UEFI 环境下的 panic handler：通过 uefi::println! 输出错误信息后停机
+// Boot Services 退出前 uefi::println! 可用；退出后无法输出，只能死循环
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    uefi::println!("[LOADER PANIC] {}", info);
     loop {}
 }
 
@@ -45,14 +46,17 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 fn efi_main() -> Status {
     // 初始化 uefi crate 内部状态（日志等，若启用相关 feature）
     helpers::init().expect("helpers::init failed");
+    uefi::println!("[loader] step 1/6: helpers init ok");
 
     // 获取加载器所在设备的 SimpleFileSystem 协议句柄
     // get_image_file_system 内部通过 LoadedImage 协议找到加载器所在分区
     let image = boot::image_handle();
     let mut fs = boot::get_image_file_system(image).expect("Failed to get image file system");
+    uefi::println!("[loader] step 2/6: got image file system");
 
     // 打开 FAT 分区根目录
     let mut root = fs.open_volume().expect("Failed to open root volume");
+    uefi::println!("[loader] step 3/6: opened root volume");
 
     // 打开内核二进制文件（只读模式）
     let kernel_handle = root
@@ -74,6 +78,7 @@ fn efi_main() -> Status {
         .get_info::<FileInfo>(&mut info_buf)
         .expect("Failed to get kernel file info");
     let kernel_size = file_info.file_size() as usize;
+    uefi::println!("[loader] step 4/6: kernel file size = {} bytes", kernel_size);
 
     // 计算需要的内存页数（UEFI 页大小为 4096 字节，向上取整）
     let page_count = (kernel_size + 0xFFF) / 0x1000;
@@ -87,6 +92,7 @@ fn efi_main() -> Status {
         page_count,
     )
     .expect("Failed to allocate pages at 0x80080000");
+    uefi::println!("[loader] step 5/6: allocated {} pages at {:p}", page_count, kernel_dest.as_ptr());
 
     // 将内核文件内容直接读入目标物理地址
     // 避免二次复制：直接读到最终执行地址，减少内存占用
@@ -96,6 +102,7 @@ fn efi_main() -> Status {
 
     // 验证读取字节数与文件大小一致
     assert_eq!(bytes_read, kernel_size, "Kernel read size mismatch");
+    uefi::println!("[loader] step 6/6: kernel loaded ({} bytes), jumping to 0x{:x}...", bytes_read, KERNEL_LOAD_ADDR);
 
     // 退出 UEFI Boot Services：此后不能再调用任何 Boot Services 函数
     // exit_boot_services 内部处理内存映射 key 失效重试，调用后 UEFI 运行时不再可用
