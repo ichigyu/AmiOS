@@ -96,17 +96,16 @@ _start:
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
-    // 初始化调试用 UART 基地址寄存器
-    uart_debug_init
+    // 第一件事：清零 SCTLR_EL1，必须在任何内存访问之前执行
+    // UEFI 固件可能在 EL1 留下了开启 MMU、缓存或对齐检查的状态。
+    // 若不先清零，下面的 ldr（literal pool 访问）就可能触发对齐异常卡死。
+    // 写入 0：关闭 MMU（M=0）、D-cache（C=0）、I-cache（I=0）、对齐检查（A=0）
+    msr     sctlr_el1, xzr      // 清零 SCTLR_EL1
+    isb                          // 指令同步屏障：确保立即生效，后续指令在新状态下执行
 
-    // 显式初始化 SCTLR_EL1（System Control Register）
-    // UEFI 固件可能在 EL1 留下了开启 MMU、缓存或对齐检查的状态，
-    // 不清零会导致内核在没有页表/异常向量的情况下触发异常后卡死。
-    // 写入 0：关闭 MMU（M=0）、关闭 D-cache（C=0）、关闭 I-cache（I=0）、
-    //         关闭对齐检查（A=0）、关闭 SP 对齐检查（SA=0）
-    msr     sctlr_el1, xzr     // 清零 SCTLR_EL1，确保 MMU/cache 全部关闭
-    isb                         // 指令同步屏障：确保 SCTLR_EL1 写入立即生效
-    uart_putc '1'               // 输出 '1'：SCTLR_EL1 初始化完成
+    // 初始化调试用 UART 基地址寄存器（SCTLR 清零后才能安全访问 literal pool）
+    uart_debug_init
+    uart_putc '1'                // 输出 '1'：SCTLR_EL1 初始化完成
 
     // 设置 EL1 栈指针
     // _stack_top 由链接脚本定义，指向 BSS 段之后的栈顶
