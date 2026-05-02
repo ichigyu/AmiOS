@@ -1,0 +1,8 @@
+# user/ — 用户态程序（占位）
+#
+# 此目录将在第五章（用户进程）实现时加入 workspace。
+# 届时包含：系统调用库（syscall）和用户态应用程序。
+[package]
+name = "amios-user"
+version = "0.1.0"
+edition = "2021"

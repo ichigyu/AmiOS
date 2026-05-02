@@ -1,14 +1,9 @@
-[package]
-name = "amios"
-version = "0.1.0"
-edition = "2021"
-
-# 平台特性标志，用于条件编译不同硬件平台的驱动参数
-# 默认使用 QEMU virt 虚拟机，方便开发调试
-[features]
-default = ["qemu-virt"]
-qemu-virt = []        # QEMU virt 虚拟机（UART 基地址 0x09000000）
-phytium-d2000 = []    # 飞腾 D2000 真实硬件（UART 基地址 0x28001000）
+[workspace]
+members = [
+    "kernel",
+    "tests",
+]
+resolver = "2"
 
 # release 构建优化：减小二进制体积，适合嵌入式场景
 [profile.release]

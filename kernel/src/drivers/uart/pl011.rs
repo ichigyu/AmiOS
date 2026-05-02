@@ -1,20 +1,19 @@
 // ┌─────────────────────────────────────────────────────────────┐
-// │  src/uart.rs — PL011 UART 串口驱动                          │
+// │  drivers/uart/pl011.rs — ARM PL011 UART 寄存器操作实现      │
 // │                                                             │
-// │  职责：封装 ARM PL011 UART 控制器的寄存器操作，提供字符      │
-// │        输出接口，并实现 core::fmt::Write 以支持格式化输出    │
+// │  职责：封装 PL011 UART 控制器的 MMIO 寄存器操作，提供        │
+// │        初始化、字符输出和 fmt::Write 接口                    │
 // │                                                             │
 // │  调用关系：                                                  │
-// │    main.rs                                                  │
-// │      └─→ uart::init()          初始化串口控制器             │
-// │      └─→ print! / println!     格式化输出宏                 │
-// │            └─→ Uart::write_str()  Write trait 实现          │
-// │                  └─→ uart_putchar()  单字符写入              │
-// │                        └─→ MMIO 寄存器操作                  │
+// │    drivers::uart (mod.rs)                                   │
+// │      └─→ pl011::init()         初始化串口控制器             │
+// │      └─→ pl011::putchar()      单字符写入                   │
+// │      └─→ pl011::Uart           fmt::Write 实现              │
+// │            └─→ MMIO 寄存器操作（bsp::mmio 常量）              │
 // └─────────────────────────────────────────────────────────────┘
 
 use core::fmt;
-use crate::platform::mmio::{UART0_BASE, UART_CLK_HZ};
+use crate::bsp::mmio::{UART0_BASE, UART_CLK_HZ};
 
 // ── PL011 寄存器偏移量 ────────────────────────────────────────
 // 来源：ARM PrimeCell UART (PL011) 技术参考手册 r1p5
@@ -46,11 +45,13 @@ const UARTFR_TXFF: u32 = 1 << 5;
 
 // ── UARTCR 控制位 ─────────────────────────────────────────────
 /// UART 使能位（bit0）：为 1 时启用 UART
-const UARTCR_CTSEN: u32 = 1 << 0;
+const UARTCR_UARTEN: u32 = 1 << 0;
 /// 发送使能位（bit8）：为 1 时启用发送功能
 const UARTCR_TXE: u32 = 1 << 8;
 /// 接收使能位（bit9）：为 1 时启用接收功能
 const UARTCR_RXE: u32 = 1 << 9;
+// 注：CTS 硬件流控使能位为 bit15（CTSEN），此处不启用
+// D2000 调试串口排针通常无 CTS 线，启用后会导致发送永久阻塞
 
 // ── UARTLCR_H 线控位 ──────────────────────────────────────────
 /// 使能 FIFO（bit4）：为 1 时启用发送/接收 FIFO 缓冲
@@ -106,7 +107,9 @@ pub fn init() {
     mmio_write(UART0_BASE + UARTLCR_H, UARTLCR_H_WLEN_8BIT | UARTLCR_H_FEN);
 
     // 第四步：启用 UART、发送和接收功能
-    mmio_write(UART0_BASE + UARTCR, UARTCR_CTSEN | UARTCR_TXE | UARTCR_RXE);
+    // 不启用 CTS 硬件流控（bit15 CTSEN）：D2000 调试串口无 CTS 引脚，
+    // QEMU virt 也不需要流控，统一不启用以保持两平台行为一致
+    mmio_write(UART0_BASE + UARTCR, UARTCR_UARTEN | UARTCR_TXE | UARTCR_RXE);
 }
 
 // ── 字符输出 ──────────────────────────────────────────────────

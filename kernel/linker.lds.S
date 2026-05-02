@@ -1,16 +1,29 @@
 /* ============================================================
- * AmiOS 内核链接脚本 linker.ld
+ * AmiOS 内核链接脚本模板 linker.lds.S
  *
  * 职责：定义内核在内存中的布局，告诉链接器各段放在哪里
+ *       通过 C 预处理器宏区分平台，与 Linux 内核 / U-Boot 惯例一致
  *
- * 内存布局（QEMU virt 板）：
- *   0x40000000  RAM 起始（QEMU virt 板物理内存起点）
- *   0x40080000  内核加载地址（_start 入口，与 QEMU -kernel 默认一致）
- *   0x40080000  .text   代码段
- *               .rodata 只读数据段（字符串常量等）
- *               .data   已初始化全局变量
- *               .bss    未初始化全局变量（运行时清零）
- *               _stack_top  栈顶（向低地址增长）
+ * 使用方式（由 Makefile 执行）：
+ *   $(CC) -E -P -x c -DPLATFORM_QEMU_VIRT    linker.lds.S -o linker.lds
+ *   $(CC) -E -P -x c -DPLATFORM_PHYTIUM_D2000 linker.lds.S -o linker.lds
+ *
+ * 内存布局：
+ *
+ *   QEMU virt 板：
+ *     0x40000000  RAM 起始
+ *     0x40080000  内核加载地址（_start 入口）
+ *
+ *   飞腾 D2000：
+ *     0x80000000  RAM 起始
+ *     0x80080000  内核加载地址（与 U-Boot fatload 目标地址一致）
+ *
+ *   通用段布局（两平台相同）：
+ *     KERNEL_BASE  .text   代码段
+ *                  .rodata 只读数据段
+ *                  .data   已初始化全局变量
+ *                  .bss    未初始化全局变量（运行时清零）
+ *                  _stack_top  栈顶（向低地址增长，512KB）
  * ============================================================ */
 
 /* 内核入口符号，链接器从这里开始 */
@@ -18,10 +31,16 @@ ENTRY(_start)
 
 SECTIONS
 {
-    /* 内核起始地址：QEMU virt 板 RAM 从 0x40000000 开始，
+#ifdef PLATFORM_PHYTIUM_D2000
+    /* 飞腾 D2000：RAM 从 0x80000000 开始，内核加载到 0x80080000
+     * 低于此地址的空间留给 U-Boot 传递的参数和设备树 */
+    . = 0x80080000;
+#else
+    /* QEMU virt（默认）：RAM 从 0x40000000 开始，
      * 0x40080000 是 QEMU 默认加载 Linux 内核的地址，
      * 低于此地址的空间留给设备树（DTB）等固件数据 */
     . = 0x40080000;
+#endif
 
     /* .text 段：存放所有可执行代码
      * KEEP(.text.boot) 确保启动代码不被链接器优化掉 */

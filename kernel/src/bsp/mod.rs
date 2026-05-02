@@ -1,15 +1,22 @@
 // ┌─────────────────────────────────────────────────────────────┐
-// │  src/platform/mod.rs — 硬件平台 MMIO 地址常量               │
+// │  bsp/mod.rs — 板级支持包（Board Support Package）           │
 // │                                                             │
-// │  职责：集中定义各平台的内存映射 I/O 地址，避免代码中出现     │
-// │        魔法数字，并通过 Cargo feature 区分不同硬件平台       │
+// │  职责：集中定义各平台的内存映射 I/O 地址和板级常量，         │
+// │        通过 Cargo feature 区分不同硬件平台                   │
 // │                                                             │
 // │  支持平台：                                                  │
 // │    qemu-virt     QEMU virt 虚拟机（默认，用于开发调试）      │
-// │    phytium-d2000 飞腾 D2000 真实硬件（后续章节适配）         │
+// │    phytium-d2000 飞腾 D2000 真实硬件                        │
+// │                                                             │
+// │  调用关系：                                                  │
+// │    drivers::uart::pl011                                     │
+// │      └─→ bsp::mmio::UART0_BASE   UART 基地址               │
+// │      └─→ bsp::mmio::UART_CLK_HZ  时钟频率（波特率计算）     │
+// │    kernel::kernel_main                                      │
+// │      └─→ bsp::BOARD_NAME         启动横幅板名               │
 // └─────────────────────────────────────────────────────────────┘
 
-// ── QEMU virt 平台地址定义 ────────────────────────────────────
+// ── QEMU virt 平台 ────────────────────────────────────────────
 // 地址来源：QEMU 源码 hw/arm/virt.c 中的 a15memmap[] 数组
 #[cfg(feature = "qemu-virt")]
 pub mod mmio {
@@ -30,7 +37,7 @@ pub mod mmio {
     pub const RAM_BASE: usize = 0x4000_0000;
 
     /// 内核加载地址（_start 入口）
-    /// 与链接脚本 linker.ld 中的起始地址保持一致
+    /// 与链接脚本 linker.lds.S 中的起始地址保持一致
     pub const KERNEL_BASE: usize = 0x4008_0000;
 
     /// PL011 UART 参考时钟频率（Hz）
@@ -38,7 +45,11 @@ pub mod mmio {
     pub const UART_CLK_HZ: u32 = 24_000_000;
 }
 
-// ── 飞腾 D2000 平台地址定义 ───────────────────────────────────
+/// 板名字符串，用于启动横幅显示
+#[cfg(feature = "qemu-virt")]
+pub const BOARD_NAME: &str = "QEMU virt";
+
+// ── 飞腾 D2000 平台 ───────────────────────────────────────────
 // 地址来源：飞腾 D2000 处理器技术参考手册
 // 注意：D2000 有多个 UART 控制器，UART1 通常作为调试串口
 #[cfg(feature = "phytium-d2000")]
@@ -50,10 +61,14 @@ pub mod mmio {
     /// 飞腾 D2000 物理内存起始地址
     pub const RAM_BASE: usize = 0x8000_0000;
 
-    /// 飞腾 D2000 内核加载地址（待确认，参考 BSP 文档）
+    /// 飞腾 D2000 内核加载地址（与链接脚本 linker.lds.S 保持一致）
     pub const KERNEL_BASE: usize = 0x8008_0000;
 
     /// PL011 UART 参考时钟频率（Hz）
     /// 飞腾 D2000 UART 时钟为 48MHz（见飞腾 D2000 处理器技术参考手册）
     pub const UART_CLK_HZ: u32 = 48_000_000;
 }
+
+/// 板名字符串，用于启动横幅显示
+#[cfg(feature = "phytium-d2000")]
+pub const BOARD_NAME: &str = "Phytium D2000";

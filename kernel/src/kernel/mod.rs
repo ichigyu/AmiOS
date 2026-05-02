@@ -1,56 +1,25 @@
 // ┌─────────────────────────────────────────────────────────────┐
-// │  src/main.rs — 内核主入口与基础运行时                        │
+// │  kernel/mod.rs — 内核核心基础设施                           │
 // │                                                             │
-// │  职责：提供 no_std 裸机运行时基础设施，包括：               │
+// │  职责：提供内核运行时基础设施，包括：                        │
 // │    - panic handler（崩溃处理）                              │
 // │    - 全局分配器占位（当前不支持堆分配）                      │
 // │    - kernel_main（Rust 层内核入口）                          │
-// │    - print! / println! 宏（格式化串口输出）                  │
 // │                                                             │
 // │  调用关系：                                                  │
-// │    boot.rs (_start)                                         │
-// │      └─→ kernel_main()          Rust 入口                   │
-// │            ├─→ uart::init()     初始化串口                   │
-// │            └─→ println!(...)    输出启动信息                 │
+// │    arch/aarch64/boot.S (_start)                             │
+// │      └─→ kernel_main()              Rust 入口               │
+// │            ├─→ drivers::uart::init()  初始化串口             │
+// │            └─→ println!(...)          输出启动信息           │
 // └─────────────────────────────────────────────────────────────┘
 
-// 裸机环境：不链接标准库（std），使用 core 库替代
-#![no_std]
-// 不使用 Rust 默认的 main 入口，由链接脚本和汇编指定入口 _start
-#![no_main]
+mod io;
 
-// 引入启动代码模块（包含 global_asm! 的汇编启动代码）
-mod boot;
-// 引入平台 MMIO 地址常量模块
-mod platform;
-// 引入 PL011 UART 驱动模块
-mod uart;
+#[allow(unused_imports)]
+use crate::{print, println};
+use crate::bsp::BOARD_NAME;
 
-use core::fmt::Write;
-
-// ── print! / println! 宏 ──────────────────────────────────────
-// 这两个宏是内核调试输出的主要接口，底层调用 UART 驱动
-// 接口与标准库的 print!/println! 完全兼容
-
-/// 格式化输出到串口，不换行
-/// 用法：print!("x = {}", x)
-#[macro_export]
-macro_rules! print {
-    ($($arg:tt)*) => {
-        // 创建临时 Uart 写入器，调用 write_fmt 完成格式化
-        $crate::uart::Uart.write_fmt(format_args!($($arg)*)).unwrap()
-    };
-}
-
-/// 格式化输出到串口，末尾自动添加换行
-/// 用法：println!("Hello, {}!", name)
-#[macro_export]
-macro_rules! println {
-    () => ($crate::print!("\n"));
-    ($($arg:tt)*) => {
-        $crate::print!("{}\n", format_args!($($arg)*))
-    };
-}
+use core::alloc::{GlobalAlloc, Layout};
 
 // ── Panic Handler ─────────────────────────────────────────────
 // 当代码触发 panic（如数组越界、unwrap None 等）时，此函数被调用
@@ -72,7 +41,6 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     print!("\n{}\n", info.message());
 
     // 进入无限循环，停止 CPU 执行
-    // 使用 wfe（Wait For Event）降低功耗，但保持 CPU 停止状态
     loop {
         // aarch64 的低功耗等待指令，避免空转浪费功耗
         core::hint::spin_loop();
@@ -84,36 +52,26 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 // 此占位实现会在调用时触发 panic，给出明确的错误提示
 // 后续章节（内存管理）将替换为真实的堆分配器
 
-use core::alloc::{GlobalAlloc, Layout};
-
 /// 占位全局分配器：当前阶段不支持堆分配
-struct NoHeapAllocator;
+pub struct NoHeapAllocator;
 
 // SAFETY: 此分配器的 alloc 和 dealloc 都会 panic，
 // 不会真正分配内存，因此实现是安全的（虽然无用）
 unsafe impl GlobalAlloc for NoHeapAllocator {
     unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        // 堆分配被调用时触发 panic，提示开发者当前阶段不支持
-        // 后续章节实现内存管理后，此处将替换为真实分配逻辑
-        panic!("堆内存分配尚未实现（后续章节将添加内存管理）")
+        panic!("heap allocation not yet implemented (coming in a later chapter)")
     }
 
     unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        // 同上，释放操作也不支持
-        panic!("堆内存释放尚未实现（后续章节将添加内存管理）")
+        panic!("heap deallocation not yet implemented (coming in a later chapter)")
     }
 }
-
-/// 注册全局分配器
-/// 只要不调用 Box::new / Vec::new 等堆分配操作，此占位不会触发
-#[global_allocator]
-static ALLOCATOR: NoHeapAllocator = NoHeapAllocator;
 
 // ── 内核主函数 ────────────────────────────────────────────────
 
 /// 内核 Rust 层入口函数
 ///
-/// 由汇编启动代码（src/boot.rs 中的 _start）在完成以下工作后调用：
+/// 由汇编启动代码（arch/aarch64/boot.S 中的 _start）在完成以下工作后调用：
 ///   1. EL2 → EL1 异常级别切换
 ///   2. 栈指针初始化
 ///   3. BSS 段清零
@@ -122,21 +80,19 @@ static ALLOCATOR: NoHeapAllocator = NoHeapAllocator;
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
     // 初始化 PL011 UART 串口，之后才能使用 print!/println!
-    uart::init();
+    crate::drivers::uart::init();
 
     // 输出启动横幅，确认内核成功进入 Rust 执行环境
     println!("================================================");
-    println!("  AmiOS — ARMv8 操作系统内核");
-    println!("  架构：AArch64 (ARMv8-A)");
-    println!("  平台：QEMU virt");
-    println!("  参考：rCore-Tutorial (RISC-V → ARMv8 移植)");
+    println!("  AmiOS -- ARMv8 OS Kernel");
+    println!("  Arch:    AArch64 (ARMv8-A)");
+    println!("  Board:   {}", BOARD_NAME);
     println!("================================================");
-    println!("内核启动成功，进入主循环...");
+    println!("Kernel booted successfully. Entering main loop...");
 
     // 主循环：当前阶段内核没有任务可做，进入低功耗等待
     // 后续章节将在此处添加：进程调度、系统调用处理等
     loop {
-        // 等待中断或事件（后续章节开启中断后此处会被唤醒）
         core::hint::spin_loop();
     }
 }

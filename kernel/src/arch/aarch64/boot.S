@@ -1,30 +1,33 @@
 // ┌─────────────────────────────────────────────────────────────┐
-// │  src/boot.rs — ARMv8 裸机启动代码                           │
+// │  arch/aarch64/boot.S — ARMv8 裸机启动汇编                   │
 // │                                                             │
-// │  职责：从 QEMU 上电到进入 Rust kernel_main 的完整引导链      │
+// │  职责：从固件上电到进入 Rust kernel_main 的完整引导链        │
+// │                                                             │
+// │  支持的入口异常级别：                                        │
+// │    EL2（QEMU virt 默认）→ 切换到 EL1 后继续                 │
+// │    EL1（部分固件直接交接）→ 直接继续                         │
+// │    EL3 → 停机（死循环），不支持从 EL3 启动                   │
+// │           EL3 通常由 ARM Trusted Firmware 持有，             │
+// │           正常启动链不应在 EL3 交接内核                      │
 // │                                                             │
 // │  执行流程：                                                  │
-// │    QEMU 加载内核到 0x40080000                               │
+// │    固件加载内核到 KERNEL_BASE                               │
 // │      └─→ _start（本文件，汇编入口）                          │
 // │            ├─→ 检测当前异常级别（EL）                        │
-// │            ├─→ 若在 EL2，切换到 EL1                         │
+// │            ├─→ EL3：跳转到 .el3_halt 死循环（GDB 可定位）   │
+// │            ├─→ EL2：切换到 EL1                              │
+// │            ├─→ EL1：直接继续                                 │
 // │            ├─→ 设置栈指针 SP_EL1                            │
 // │            ├─→ 清零 BSS 段                                  │
-// │            └─→ 跳转到 kernel_main（src/main.rs）            │
+// │            └─→ 跳转到 kernel_main                           │
 // └─────────────────────────────────────────────────────────────┘
 
-// global_asm! 宏：将汇编代码直接嵌入到当前编译单元
-// 这段汇编会被放入 .text.boot 段（链接脚本中排在最前面）
-use core::arch::global_asm;
-
-global_asm!(
-    r#"
-// 将 _start 放入 .text.boot 段，链接脚本保证它位于 0x40080000
+// 将 _start 放入 .text.boot 段，链接脚本保证它位于 KERNEL_BASE
 .section .text.boot
 .global _start          // 导出 _start 符号，链接脚本的 ENTRY 指向它
 
 // ── 内核入口 ──────────────────────────────────────────────────
-// QEMU 加载内核后，所有 CPU 核心都会从这里开始执行
+// 固件加载内核后，所有 CPU 核心都会从这里开始执行
 // 我们只让 CPU0 继续，其余核心进入低功耗等待状态
 _start:
     // 读取当前 CPU 编号（MPIDR_EL1 寄存器的低 8 位是 CPU ID）
@@ -34,13 +37,15 @@ _start:
 
     // ── 检测当前异常级别 ──────────────────────────────────────
     // ARMv8 有 EL0（用户态）、EL1（内核态）、EL2（虚拟机监控）、EL3（安全监控）
-    // QEMU virt 默认从 EL2 启动，内核需要运行在 EL1
+    // QEMU virt 默认从 EL2 启动；部分真实硬件固件在 EL1 交接
     mrs     x0, CurrentEL       // 读取当前异常级别寄存器
     lsr     x0, x0, #2          // CurrentEL[3:2] 是 EL 值，右移 2 位提取
     and     x0, x0, #3          // 屏蔽高位，只保留 EL 值（0~3）
+    cmp     x0, #3              // 判断是否在 EL3
+    b.eq    .el3_halt            // EL3 不支持，跳转到停机循环
     cmp     x0, #2              // 判断是否在 EL2
     b.eq    .el2_to_el1         // 若在 EL2，执行降级切换
-    // 若已在 EL1（某些配置下），直接跳到 EL1 初始化
+    // 若已在 EL1（某些固件直接在 EL1 交接），直接跳到 EL1 初始化
     b       .el1_init
 
 // ── EL2 → EL1 切换 ───────────────────────────────────────────
@@ -94,7 +99,7 @@ _start:
 .bss_done:
 
     // ── 跳转到 Rust 内核主函数 ────────────────────────────────
-    // kernel_main 在 src/main.rs 中定义，标注为 -> ! 不会返回
+    // kernel_main 在 kernel/src/kernel/mod.rs 中定义，标注为 -> ! 不会返回
     bl      kernel_main         // 调用 kernel_main（Branch with Link）
 
     // 理论上不会执行到这里，但以防万一加一个无限循环
@@ -106,5 +111,11 @@ _start:
 .cpu_idle:
     wfe                         // 等待事件（低功耗等待）
     b       .cpu_idle           // 被唤醒后继续等待（后续章节实现多核调度）
-"#
-);
+
+// ── EL3 停机 ──────────────────────────────────────────────────
+// AmiOS 不支持从 EL3 启动（EL3 由 ARM Trusted Firmware 持有）
+// 若固件在 EL3 交接，在此死循环，GDB 可通过 PC 值定位到此处
+// 调试方法：make debug，GDB 连接后 `info registers pc` 确认卡在此处
+.el3_halt:
+    wfe                         // 低功耗等待，避免空转消耗功率
+    b       .el3_halt           // 死循环，永不退出

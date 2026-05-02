@@ -1,0 +1,8 @@
+[package]
+name = "amios-tests"
+version = "0.1.0"
+edition = "2021"
+
+# tests crate 在 host 上运行（x86_64），测试纯逻辑（常量计算等）
+# 不依赖 amios-kernel crate（kernel 是 no_std 裸机 binary，无 lib target）
+# 常量值在此处独立验证，确保与 platform/mod.rs 中的定义一致
