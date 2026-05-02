@@ -47,8 +47,19 @@ all: build
 # ── 链接脚本预处理 ────────────────────────────────────────────
 # 与 Linux 内核 / U-Boot 惯例一致：单一模板 + C 预处理器生成最终脚本
 # -E: 只做预处理  -P: 不输出行号标记  -x c: 按 C 语言处理
-$(LINKER_OUT): $(LINKER_SRC)
+# 注意：make 的文件依赖只检查时间戳，不感知 PLATFORM 变量变化。
+# 用 .platform_stamp 文件记录上次编译的平台，平台切换时强制重新生成链接脚本。
+PLATFORM_STAMP := kernel/.platform_stamp
+
+$(PLATFORM_STAMP): FORCE
+	@if [ "$$(cat $(PLATFORM_STAMP) 2>/dev/null)" != "$(PLATFORM)" ]; then \
+		echo "$(PLATFORM)" > $(PLATFORM_STAMP); \
+	fi
+
+$(LINKER_OUT): $(LINKER_SRC) $(PLATFORM_STAMP)
 	$(CC) -E -P -x c -DPLATFORM_$(PLATFORM) $< -o $@
+
+FORCE:
 
 # ── 编译内核 ──────────────────────────────────────────────────
 # 先生成链接脚本，再编译 Rust 内核，最后用 objcopy 去掉 ELF 头
@@ -127,5 +138,5 @@ test:
 clean:
 	cargo clean $(CARGO_FLAGS)
 	cargo clean --manifest-path loader/Cargo.toml
-	rm -f $(LINKER_OUT)
+	rm -f $(LINKER_OUT) $(PLATFORM_STAMP)
 	@echo "Clean complete"
