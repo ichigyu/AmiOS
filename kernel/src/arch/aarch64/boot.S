@@ -80,21 +80,27 @@ _start:
 .el2_to_el1:
     // 配置 HCR_EL2（Hypervisor Configuration Register）
     // 读-改-写，保留 UEFI 设置的其他位，只确保 RW=1
-    // bit31 (RW) = 1：EL1 运行在 AArch64 模式（而非 AArch32）
+    // 同时清除可能导致 EL1 系统寄存器访问陷入的位：
+    //   bit31 (RW)   = 1：EL1 运行在 AArch64 模式（而非 AArch32）
+    //   bit30 (TRVM) = 0：不陷入 EL1 读取虚拟内存控制寄存器（如 SCTLR_EL1）
+    //   bit26 (TVM)  = 0：不陷入 EL1 写入虚拟内存控制寄存器
+    // D2000 固件可能设置了 TRVM/TVM，导致 EL1 执行 mrs SCTLR_EL1 时陷入 EL2
     mrs     x0, hcr_el2
-    orr     x0, x0, #(1 << 31)  // RW=1，EL1 使用 64 位模式
+    orr     x0, x0, #(1 << 31)     // RW=1，EL1 使用 64 位模式
+    bic     x0, x0, #(1 << 30)     // TRVM=0：允许 EL1 读取虚拟内存控制寄存器
+    bic     x0, x0, #(1 << 26)     // TVM=0：允许 EL1 写入虚拟内存控制寄存器
     msr     hcr_el2, x0
 
     // 配置 SPSR_EL2（Saved Program Status Register）
     // 这是 ERET 后 PSTATE 的值：
-    //   bit9 (D) = 1：调试异常屏蔽
+    //   bit9 (D) = 1：调试异常屏蔽（防止固件开启的调试异常在 EL1 触发）
     //   bit8 (A) = 1：SError 异常屏蔽
     //   bit7 (I) = 1：IRQ 中断屏蔽（暂时关闭，后续章节开启）
     //   bit6 (F) = 1：FIQ 中断屏蔽
     //   bit4 (M[4]) = 0：AArch64 模式
     //   bit3:0 (M[3:0]) = 0101：EL1h（EL1 使用 SP_EL1 作为栈指针）
-    mov     x0, #0x5            // EL1h 模式（0b0101：EL1 使用 SP_EL1）
-    orr     x0, x0, #0x1C0     // 屏蔽所有中断（D/A/I/F 位，bit6~9）
+    // 0x3C5 = 0b1111000101：D/A/I/F 全部屏蔽（bit6~9），EL1h 模式
+    mov     x0, #0x3C5          // EL1h 模式 + D/A/I/F 全部屏蔽
     msr     spsr_el2, x0        // 写入 SPSR_EL2
 
     // 配置 ELR_EL2（Exception Link Register）
