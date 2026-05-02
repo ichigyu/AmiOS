@@ -70,74 +70,85 @@ _start:
     cbnz    x0, .cpu_idle       // 若不是 CPU0，跳转到空闲循环
 
     // ── 检测当前异常级别 ──────────────────────────────────────
-    // ARMv8 有 EL0（用户态）、EL1（内核态）、EL2（虚拟机监控）、EL3（安全监控）
-    // QEMU virt 默认从 EL2 启动；D2000 固件也在 EL2 交接
-    // 策略：无论 EL2 还是 EL1 都直接进入 .el_init，不做 EL2→EL1 切换
-    // 原因：飞腾 EDK2 的 EL2 环境下 eret 无法正常降级到 EL1（被固件拦截），
-    //       直接在 EL2 运行内核是最可靠的方案
-    mrs     x0, CurrentEL       // 读取当前异常级别寄存器
-    lsr     x0, x0, #2          // CurrentEL[3:2] 是 EL 值，右移 2 位提取
-    and     x0, x0, #3          // 屏蔽高位，只保留 EL 值（0~3）
-    cmp     x0, #3              // 判断是否在 EL3
-    b.eq    .el3_halt            // EL3 不支持，跳转到停机循环
-    // EL2 或 EL1 均直接进入初始化，不尝试 eret 降级
-    b       .el_init
+    // QEMU virt 和 D2000 固件均在 EL2 交接
+    // 飞腾 SDK 标准路径：EL2 → eret → EL1 → 运行
+    mrs     x0, CurrentEL
+    lsr     x0, x0, #2
+    and     x0, x0, #3
+    cmp     x0, #3
+    b.eq    .el3_halt
+    cmp     x0, #2
+    b.eq    .el_init        // EL2：配置后 eret 到 EL1
+    b       .el_init        // EL1：直接初始化
 
-// ── 内核初始化（EL2 或 EL1 均可）────────────────────────────
-// D2000 固件在 EL2 交接，QEMU 也在 EL2 交接。
-// 不做 eret 降级，直接在当前 EL 初始化并运行内核。
-// EL2 和 EL1 的系统寄存器名称不同，用条件分支分别处理。
+// ── 内核初始化入口 ────────────────────────────────────────────
 .el_init:
-    uart_putc 'A'               // 输出 'A'：进入 .el_init
+    uart_putc 'A'
 
-    // 重新读取当前 EL，决定使用哪套系统寄存器
     mrs     x1, CurrentEL
     lsr     x1, x1, #2
-    and     x1, x1, #3          // x1 = 当前 EL（1 或 2）
+    and     x1, x1, #3
     cmp     x1, #2
-    b.eq    .init_el2
+    b.eq    .init_el2_to_el1
 
-// ── EL1 路径：初始化 EL1 系统寄存器 ─────────────────────────
+// ── 已在 EL1：直接初始化 EL1 系统寄存器 ─────────────────────
 .init_el1:
-    // SCTLR_EL1：关闭 MMU/Cache，保留 RES1 位
     mrs     x0, sctlr_el1
-    bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
-    bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
-    bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
-    bic     x0, x0, #(1 << 12)  // I=0：关闭 I-cache
+    bic     x0, x0, #(1 << 0)
+    bic     x0, x0, #(1 << 1)
+    bic     x0, x0, #(1 << 2)
+    bic     x0, x0, #(1 << 12)
     msr     sctlr_el1, x0
     isb
-    // VBAR_EL1：设置临时异常向量表，防止异常跳飞
     adr     x0, .simple_vectors
     msr     vbar_el1, x0
     isb
-    // CPACR_EL1：允许 FP/SIMD，防止 Rust 编译器生成的 NEON 指令陷入
     mov     x0, #(3 << 20)
     msr     cpacr_el1, x0
     isb
     b       .init_common
 
-// ── EL2 路径：初始化 EL2 系统寄存器 ─────────────────────────
-.init_el2:
-    // SCTLR_EL2：关闭 MMU/Cache，保留 RES1 位
-    // EL2 的 SCTLR 布局与 EL1 相同（M/A/C/I 位位置一致）
-    mrs     x0, sctlr_el2
-    bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
-    bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
-    bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
-    bic     x0, x0, #(1 << 12)  // I=0：关闭 I-cache
-    msr     sctlr_el2, x0
+// ── 在 EL2：按飞腾 SDK El2Entry 顺序配置后 eret 到 EL1 ──────
+// 参考：phytium-standalone-sdk/arch/armv8/aarch64/gcc/fboot.S El2Entry
+.init_el2_to_el1:
+    // HCR_EL2.RW=1：EL1 运行在 AArch64 模式
+    mov     x0, #(1 << 31)
+    msr     hcr_el2, x0
+
+    // SCTLR_EL1：在 EL2 里预先关闭 EL1 的 MMU/Cache（合法，eret 前在 EL2 可写）
+    mrs     x0, sctlr_el1
+    bic     x0, x0, #(1 << 0)   // M=0
+    bic     x0, x0, #(1 << 1)   // A=0
+    bic     x0, x0, #(1 << 2)   // C=0
+    bic     x0, x0, #(1 << 12)  // I=0
+    msr     sctlr_el1, x0
     isb
-    // VBAR_EL2：设置临时异常向量表，防止异常跳飞
+
+    // CNTHCTL_EL2：允许 EL1/EL0 访问物理计时器和计数器
+    // 飞腾 SDK 设置此寄存器为 0x3；若不设置，EL1 访问计时器会陷入 EL2
+    // bit0 (EL1PCTEN)=1：允许 EL1/EL0 读取 CNTPCT_EL0
+    // bit1 (EL1PCEN) =1：允许 EL1/EL0 访问物理计时器
+    mov     x0, #0x3
+    msr     cnthctl_el2, x0
+
+    // VBAR_EL1：设置临时异常向量表（在 EL2 里预设，eret 后 EL1 立即生效）
     adr     x0, .simple_vectors
-    msr     vbar_el2, x0
-    isb
-    // EL2 没有 CPACR_EL2，FP/SIMD 访问由 CPTR_EL2 控制
-    // CPTR_EL2.TFP（bit10）= 0：允许 EL2 访问 FP/SIMD（默认值，通常已是 0）
-    mrs     x0, cptr_el2
-    bic     x0, x0, #(1 << 10)  // TFP=0：不陷入 FP/SIMD 指令
-    msr     cptr_el2, x0
-    isb
+    msr     vbar_el1, x0
+
+    // CPACR_EL1：允许 FP/SIMD（在 EL2 里预设）
+    mov     x0, #(3 << 20)
+    msr     cpacr_el1, x0
+
+    // SPSR_EL2：eret 后的 PSTATE，EL1h 模式，D/A/I/F 全部屏蔽
+    mov     x0, #0x3C5          // 0b1111000101：EL1h + DAIF 屏蔽
+    msr     spsr_el2, x0
+
+    // ELR_EL2：eret 后跳转到 .init_common（已完成所有 EL1 预配置）
+    adr     x0, .init_common
+    msr     elr_el2, x0
+
+    uart_putc 'E'               // 'E'：eret 即将执行
+    eret
 
 // ── 公共初始化（EL1/EL2 共用）────────────────────────────────
 .init_common:
