@@ -7,10 +7,9 @@
 target = "aarch64-unknown-none"
 
 [target.aarch64-unknown-none]
-# 链接脚本由 Makefile 预处理 linker.lds.S 生成，路径相对于 workspace 根目录
-rustflags = [
-    "-C", "link-arg=-Tkernel/linker.lds",
-]
+# 链接脚本路径由 Makefile 通过 RUSTFLAGS 环境变量传入，
+# 根据 PLATFORM 选择 kernel/linker-qemu.lds 或 kernel/linker-d2000.lds
+# 此处不设置 link-arg，避免与 Makefile 传入的值冲突
 
 # 使用 LLVM 的 lld 链接器（比系统 ld 更好地支持裸机目标）
 linker = "rust-lld"

@@ -19,9 +19,11 @@ PLATFORM ?= QEMU_VIRT
 ifeq ($(PLATFORM),PHYTIUM_D2000)
   CARGO_FEATURES := --no-default-features --features phytium-d2000
   KERNEL_BIN_NAME := amios-kernel-d2000.bin
+  LINKER_SCRIPT := kernel/linker-d2000.lds
 else
   CARGO_FEATURES :=
   KERNEL_BIN_NAME := amios-kernel-qemu.bin
+  LINKER_SCRIPT := kernel/linker-qemu.lds
 endif
 
 # ── 工具链配置 ────────────────────────────────────────────────
@@ -35,8 +37,6 @@ OBJDUMP := rust-objdump
 TARGET      := aarch64-unknown-none
 KERNEL_ELF  := target/$(TARGET)/release/amios-kernel
 KERNEL_BIN  := target/$(TARGET)/release/$(KERNEL_BIN_NAME)
-LINKER_SRC  := kernel/linker.lds.S
-LINKER_OUT  := kernel/linker.lds
 CARGO_FLAGS := --manifest-path kernel/Cargo.toml
 
 # ── 默认目标 ──────────────────────────────────────────────────
@@ -44,28 +44,11 @@ CARGO_FLAGS := --manifest-path kernel/Cargo.toml
 
 all: build
 
-# ── 链接脚本预处理 ────────────────────────────────────────────
-# 与 Linux 内核 / U-Boot 惯例一致：单一模板 + C 预处理器生成最终脚本
-# -E: 只做预处理  -P: 不输出行号标记  -x c: 按 C 语言处理
-# 注意：make 的文件依赖只检查时间戳，不感知 PLATFORM 变量变化。
-# 用 .platform_stamp 文件记录上次编译的平台，平台切换时强制重新生成链接脚本。
-PLATFORM_STAMP := kernel/.platform_stamp
-
-$(PLATFORM_STAMP): FORCE
-	@if [ "$$(cat $(PLATFORM_STAMP) 2>/dev/null)" != "$(PLATFORM)" ]; then \
-		echo "$(PLATFORM)" > $(PLATFORM_STAMP); \
-		rm -f $(LINKER_OUT); \
-	fi
-
-$(LINKER_OUT): $(LINKER_SRC) $(PLATFORM_STAMP)
-	$(CC) -E -P -x c -DPLATFORM_$(PLATFORM) $< -o $@
-
-FORCE:
-
 # ── 编译内核 ──────────────────────────────────────────────────
-# 先生成链接脚本，再编译 Rust 内核，最后用 objcopy 去掉 ELF 头
-build: $(LINKER_OUT)
-	cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
+# 直接用平台对应的链接脚本，不需要预处理
+# RUSTFLAGS 通过环境变量传入链接脚本路径，覆盖 .cargo/config.toml 中的默认值
+build:
+	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT)" cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 	@echo "Build complete (PLATFORM=$(PLATFORM)):"
 	@echo "  ELF: $(KERNEL_ELF)"
@@ -139,5 +122,4 @@ test:
 clean:
 	cargo clean $(CARGO_FLAGS)
 	cargo clean --manifest-path loader/Cargo.toml
-	rm -f $(LINKER_OUT) $(PLATFORM_STAMP)
 	@echo "Clean complete"
