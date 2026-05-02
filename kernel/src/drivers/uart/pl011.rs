@@ -39,8 +39,9 @@ const UARTLCR_H: usize = 0x02C;
 const UARTCR: usize = 0x030;
 
 // ── UARTFR 标志位 ─────────────────────────────────────────────
-/// 发送 FIFO 满标志（Transmit FIFO Full）
-/// 为 1 时不能写入新数据，需要等待
+/// UART 忙标志（bit3）：发送器正在发送数据时为 1
+const UARTFR_BUSY: u32 = 1 << 3;
+/// 发送 FIFO 满标志（bit5）：发送 FIFO 已满时为 1，此时不可写入新数据
 const UARTFR_TXFF: u32 = 1 << 5;
 
 // ── UARTCR 控制位 ─────────────────────────────────────────────
@@ -96,6 +97,9 @@ pub fn init() {
     const FBRD: u32 = ((UART_CLK_HZ % (16 * BAUD)) * 64 + 8 * BAUD) / (16 * BAUD);
 
     // 第一步：禁用 UART，在修改配置前必须先关闭
+    // 先等待发送器空闲（UARTFR.BUSY=0），确保当前传输完成后再关闭，
+    // 否则可能截断正在发送的字节（D2000 手册 3.3.3 节要求）
+    while mmio_read(UART0_BASE + UARTFR) & UARTFR_BUSY != 0 {}
     mmio_write(UART0_BASE + UARTCR, 0);
 
     // 第二步：设置波特率

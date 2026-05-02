@@ -20,7 +20,7 @@ ifeq ($(PLATFORM),PHYTIUM_D2000)
   CARGO_FEATURES := --no-default-features --features phytium-d2000
   KERNEL_BIN_NAME := amios-kernel-d2000.bin
   LINKER_SCRIPT := kernel/linker-d2000.lds
-  ASM_DEFS := -Wa,--defsym,PHYTIUM_D2000=1
+  ASM_DEFS :=
 else
   CARGO_FEATURES :=
   KERNEL_BIN_NAME := amios-kernel-qemu.bin

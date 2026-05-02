@@ -20,11 +20,38 @@
 // │            ├─→ 设置栈指针 SP_EL1                            │
 // │            ├─→ 清零 BSS 段                                  │
 // │            └─→ 跳转到 kernel_main                           │
+// │                                                             │
+// │  平台标志：由 boot.rs 通过 concat!(include_str!(env!(...)))  │
+// │            将 build.rs 生成的 platform.inc 内联到本文件前    │
+// │            phytium-d2000 → PHYTIUM_D2000 符号已定义         │
+// │            qemu-virt     → 无符号定义                        │
 // └─────────────────────────────────────────────────────────────┘
 
 // 将 _start 放入 .text.boot 段，链接脚本保证它位于 KERNEL_BASE
 .section .text.boot
 .global _start          // 导出 _start 符号，链接脚本的 ENTRY 指向它
+
+// ── UART 直写辅助宏（仅用于启动阶段调试）─────────────────────
+// 在 Rust 运行时就绪之前，通过直接写 MMIO 寄存器输出单个字符
+// 由 build.rs 生成的 platform.inc 控制是否定义 PHYTIUM_D2000，
+// 避免 QEMU 上访问 D2000 的 UART 地址（0x28001000）触发异常卡死
+.ifdef PHYTIUM_D2000
+.macro uart_debug_init
+    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址（ttyAMA0）
+.endm
+.macro uart_putc c
+    mov     w19, #\c
+99: ldr     w18, [x20, #0x18]   // 读 UARTFR
+    tbnz    w18, #5, 99b        // TXFF（bit5）=1 则等待发送 FIFO 有空间
+    str     w19, [x20, #0x00]   // 写 UARTDR，发送字符
+.endm
+.else
+// QEMU 或其他平台：调试宏展开为空，不产生任何指令
+.macro uart_debug_init
+.endm
+.macro uart_putc c
+.endm
+.endif
 
 // ── 内核入口 ──────────────────────────────────────────────────
 // 固件加载内核后，所有 CPU 核心都会从这里开始执行
@@ -52,9 +79,11 @@ _start:
 // 通过配置系统寄存器后执行 ERET 指令，模拟从 EL2 异常返回到 EL1
 .el2_to_el1:
     // 配置 HCR_EL2（Hypervisor Configuration Register）
+    // 读-改-写，保留 UEFI 设置的其他位，只确保 RW=1
     // bit31 (RW) = 1：EL1 运行在 AArch64 模式（而非 AArch32）
-    mov     x0, #(1 << 31)      // RW=1，EL1 使用 64 位模式
-    msr     hcr_el2, x0         // 写入 HCR_EL2
+    mrs     x0, hcr_el2
+    orr     x0, x0, #(1 << 31)  // RW=1，EL1 使用 64 位模式
+    msr     hcr_el2, x0
 
     // 配置 SPSR_EL2（Saved Program Status Register）
     // 这是 ERET 后 PSTATE 的值：
@@ -76,28 +105,6 @@ _start:
     // 执行异常返回：CPU 切换到 EL1，PC 跳转到 .el1_init
     eret
 
-// ── UART 直写辅助宏（仅用于启动阶段调试）─────────────────────
-// 在 Rust 运行时就绪之前，通过直接写 MMIO 寄存器输出单个字符
-// 通过 Makefile 传入 --defsym PHYTIUM_D2000=1 控制是否启用，
-// 避免 QEMU 上访问 D2000 的 UART 地址（0x28001000）触发异常卡死
-.ifdef PHYTIUM_D2000
-.macro uart_debug_init
-    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址（ttyAMA0）
-.endm
-.macro uart_putc c
-    mov     w19, #\c
-99: ldr     w18, [x20, #0x18]   // 读 UARTFR
-    tbnz    w18, #5, 99b        // TXFF=1 则等待
-    str     w19, [x20, #0x00]   // 写 UARTDR
-.endm
-.else
-// QEMU 或其他平台：调试宏展开为空，不产生任何指令
-.macro uart_debug_init
-.endm
-.macro uart_putc c
-.endm
-.endif
-
 // ── EL1 初始化 ────────────────────────────────────────────────
 // 此时已在 EL1 运行，完成进入 Rust 前的最后准备工作
 .el1_init:
@@ -107,7 +114,6 @@ _start:
     // 正确做法：先读出当前值，再清除需要关闭的位，保留 RES1 位。
     // 关闭：M(0)=MMU, A(1)=对齐检查, C(2)=D-cache, I(12)=I-cache
     mrs     x0, sctlr_el1
-    // 清除 M|A|C|I 四位，其余位（包括 RES1）保持不变
     bic     x0, x0, #(1 << 0)   // M=0：关闭 MMU
     bic     x0, x0, #(1 << 1)   // A=0：关闭对齐检查
     bic     x0, x0, #(1 << 2)   // C=0：关闭 D-cache
@@ -115,38 +121,105 @@ _start:
     msr     sctlr_el1, x0
     isb                          // 指令同步屏障：确保立即生效
 
-    // 初始化调试用 UART 基地址寄存器（SCTLR 清零后才能安全访问 literal pool）
+    // 设置临时异常向量表
+    // UEFI 退出后 VBAR_EL1 仍指向已失效的 UEFI 异常向量表。
+    // 内核在 EL1 执行时，任何异常都会跳到无效地址卡死且无输出。
+    // 在栈和 BSS 就绪之前，先设置一个简单的死循环向量表兜底。
+    adr     x0, .simple_vectors
+    msr     vbar_el1, x0
+    isb
+
+    // 允许 EL1 访问 FP/SIMD（CPACR_EL1.FPEN = 0b11）
+    // Rust 编译器优化可能生成 NEON 指令，若 FPEN=0 则触发陷入异常。
+    // 陷入后因 VBAR_EL1 无效（上一步已修复）或向量表未完善而卡死。
+    mov     x0, #(3 << 20)      // FPEN[21:20]=11：EL0/EL1 均可访问 FP/SIMD
+    msr     cpacr_el1, x0
+    isb
+
+    // 初始化调试用 UART 基地址寄存器（D2000 平台有效，其他平台为空操作）
     uart_debug_init
-    uart_putc '1'                // 输出 '1'：SCTLR_EL1 初始化完成
+    uart_putc '1'                // 输出 '1'：系统寄存器初始化完成
 
     // 设置 EL1 栈指针
     // _stack_top 由链接脚本定义，指向 BSS 段之后的栈顶
     // ARMv8 栈向低地址增长，SP 初始化为栈顶（高地址）
-    ldr     x0, =_stack_top     // 加载栈顶地址
-    mov     sp, x0              // 设置栈指针
+    ldr     x0, =_stack_top
+    mov     sp, x0
     uart_putc '2'               // 输出 '2'：栈指针设置完成
 
     // ── 清零 BSS 段 ───────────────────────────────────────────
     // BSS 段存放未初始化的全局变量，C/Rust 语义要求它们初始值为 0
     // 但硬件上电后内存内容不确定，必须手动清零
-    ldr     x0, =_start_bss     // BSS 段起始地址
-    ldr     x1, =_end_bss       // BSS 段结束地址
-    cmp     x0, x1              // 检查 BSS 段是否为空
-    b.ge    .bss_done            // 若起始 >= 结束，跳过清零
+    ldr     x0, =_start_bss
+    ldr     x1, =_end_bss
+    cmp     x0, x1
+    b.ge    .bss_done
 .bss_loop:
-    str     xzr, [x0], #8      // 将 0 写入当前地址，然后地址 +8（按 8 字节清零）
-    cmp     x0, x1              // 检查是否到达 BSS 段末尾
-    b.lt    .bss_loop            // 若未到末尾，继续循环
+    str     xzr, [x0], #8
+    cmp     x0, x1
+    b.lt    .bss_loop
 .bss_done:
     uart_putc '3'               // 输出 '3'：BSS 清零完成
 
-    // ── 跳转到 Rust 内核主函数 ────────────────────────────────
-    // kernel_main 在 kernel/src/kernel/mod.rs 中定义，标注为 -> ! 不会返回
     uart_putc '4'               // 输出 '4'：即将跳转 kernel_main
-    bl      kernel_main         // 调用 kernel_main（Branch with Link）
+    bl      kernel_main
 
-    // 理论上不会执行到这里，但以防万一加一个无限循环
     b       .
+
+// ── 临时异常向量表 ────────────────────────────────────────────
+// ARMv8 异常向量表必须 2KB 对齐（VBAR_EL1[10:0] 必须为 0）
+// 每个入口 128 字节（32 条指令），共 16 个入口（4 类 × 4 种异常）
+// 当前阶段没有异常处理能力，所有入口均为死循环，防止跳飞
+.balign 2048
+.simple_vectors:
+    // Current EL with SP0: Synchronous
+    b       .simple_vectors + 0x000
+    .balign 128
+    // Current EL with SP0: IRQ
+    b       .simple_vectors + 0x080
+    .balign 128
+    // Current EL with SP0: FIQ
+    b       .simple_vectors + 0x100
+    .balign 128
+    // Current EL with SP0: SError
+    b       .simple_vectors + 0x180
+    .balign 128
+    // Current EL with SPx: Synchronous
+    b       .simple_vectors + 0x200
+    .balign 128
+    // Current EL with SPx: IRQ
+    b       .simple_vectors + 0x280
+    .balign 128
+    // Current EL with SPx: FIQ
+    b       .simple_vectors + 0x300
+    .balign 128
+    // Current EL with SPx: SError
+    b       .simple_vectors + 0x380
+    .balign 128
+    // Lower EL AArch64: Synchronous
+    b       .simple_vectors + 0x400
+    .balign 128
+    // Lower EL AArch64: IRQ
+    b       .simple_vectors + 0x480
+    .balign 128
+    // Lower EL AArch64: FIQ
+    b       .simple_vectors + 0x500
+    .balign 128
+    // Lower EL AArch64: SError
+    b       .simple_vectors + 0x580
+    .balign 128
+    // Lower EL AArch32: Synchronous
+    b       .simple_vectors + 0x600
+    .balign 128
+    // Lower EL AArch32: IRQ
+    b       .simple_vectors + 0x680
+    .balign 128
+    // Lower EL AArch32: FIQ
+    b       .simple_vectors + 0x700
+    .balign 128
+    // Lower EL AArch32: SError
+    b       .simple_vectors + 0x780
+    .balign 128
 
 // ── 非 CPU0 的空闲循环 ────────────────────────────────────────
 // 多核系统中，只有 CPU0 执行内核初始化
