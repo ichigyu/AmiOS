@@ -4,7 +4,11 @@
 // │  职责：从固件上电到进入 Rust kernel_main 的完整引导链        │
 // │                                                             │
 // │  支持的入口异常级别：                                        │
-// │    EL2（QEMU virt 默认）→ 切换到 EL1 后继续                 │
+// │    EL2（QEMU virt / 飞腾 D2000 UEFI 默认交接）              │
+// │      → 直接在 EL2 运行（VHE 模式）                          │
+// │      → 飞腾 D2000 平台设计如此：固件始终在 EL2 交接，        │
+// │            原生 Linux 也在 EL2 运行（dmesg: started at EL2） │
+// │            HCR_EL2.TGE=1 由固件设置，写入被静默忽略          │
 // │    EL1（部分固件直接交接）→ 直接继续                         │
 // │    EL3 → 停机（死循环），不支持从 EL3 启动                   │
 // │           EL3 通常由 ARM Trusted Firmware 持有，             │
@@ -15,9 +19,9 @@
 // │      └─→ _start（本文件，汇编入口）                          │
 // │            ├─→ 检测当前异常级别（EL）                        │
 // │            ├─→ EL3：跳转到 .el3_halt 死循环（GDB 可定位）   │
-// │            ├─→ EL2：切换到 EL1                              │
-// │            ├─→ EL1：直接继续                                 │
-// │            ├─→ 设置栈指针 SP_EL1                            │
+// │            ├─→ EL2：初始化 CPACR_EL1/VBAR_EL2，直接运行    │
+// │            ├─→ EL1：初始化 SCTLR_EL1/VBAR_EL1/CPACR_EL1   │
+// │            ├─→ 设置栈指针 SP                                │
 // │            ├─→ 清零 BSS 段                                  │
 // │            └─→ 跳转到 kernel_main                           │
 // │                                                             │
@@ -71,20 +75,15 @@ _start:
 
     // ── 检测当前异常级别 ──────────────────────────────────────
     // QEMU virt 和 D2000 固件均在 EL2 交接
-    // 飞腾 SDK 标准路径：EL2 → eret → EL1 → 运行
     mrs     x0, CurrentEL
     lsr     x0, x0, #2
     and     x0, x0, #3
     cmp     x0, #3
     b.eq    .el3_halt
-    cmp     x0, #2
-    b.eq    .el_init        // EL2：配置后 eret 到 EL1
-    b       .el_init        // EL1：直接初始化
+    b       .el_init            // EL2 或 EL1：进入初始化流程
 
 // ── 内核初始化入口 ────────────────────────────────────────────
 .el_init:
-    uart_putc 'A'
-
     mrs     x1, CurrentEL
     lsr     x1, x1, #2
     and     x1, x1, #3
@@ -108,22 +107,18 @@ _start:
     isb
     b       .init_common
 
-// ── 在 EL2：按 Linux el2_setup → install_el2_stub 顺序配置后 eret 到 EL1 ──
-// 参考：arch/arm64/kernel/head.S SYM_FUNC_START(el2_setup) → install_el2_stub
+// ── 在 EL2：飞腾 D2000 UEFI 固件锁定 HCR_EL2.TGE=1，eret 无法降级到 EL1 ──
+// 根本原因：飞腾 EDK2 在 EL2 安装了自己的 VBAR_EL2，且 HCR_EL2 写入被静默忽略。
+// 策略：放弃 EL2→EL1 切换，直接在 EL2 运行内核（VHE 模式）。
 .init_el2_to_el1:
-    // 所有寄存器写入均成功（AHSCTVPE 全部输出），但 eret 后 CPU 仍在 EL2。
-    // 推测：UEFI 忽略了对 HCR_EL2 的写入（TGE 仍为 1），eret 无法降级到 EL1。
-    // 策略：放弃 eret，直接在 EL2 运行内核。
-    // VBAR_EL2 已在 EL2 路径中设置，FP/SIMD 通过 CPACR_EL1（VHE 映射）启用。
-    uart_putc 'K'               // 'K'：跳过 eret，直接在 EL2 运行
-
-    // 在 EL2 直接运行时，CPACR_EL1 在 VHE/E2H 模式下映射到 EL2 的 FP 控制
+    // VHE 模式下 CPACR_EL1 映射到 EL2 的 FP/SIMD 控制寄存器
+    // FPEN[21:20]=11：允许 EL0/EL1（即 EL2/EL0 in VHE）访问 FP/SIMD，避免陷入
     mrs     x0, cpacr_el1
     orr     x0, x0, #(3 << 20)
     msr     cpacr_el1, x0
     isb
 
-    // 设置 EL2 的临时异常向量表
+    // 设置 EL2 异常向量表，防止任何异常跳到已失效的 UEFI 向量表
     adr     x0, .simple_vectors
     msr     vbar_el2, x0
     isb
@@ -132,12 +127,9 @@ _start:
 
 // ── 公共初始化（EL1/EL2 共用）────────────────────────────────
 .init_common:
-    uart_putc '1'               // 输出 '1'：系统寄存器初始化完成
-
     // 设置栈指针（_stack_top 由链接脚本定义，ARMv8 栈向低地址增长）
     ldr     x0, =_stack_top
     mov     sp, x0
-    uart_putc '2'               // 输出 '2'：栈指针设置完成
 
     // 清零 BSS 段（未初始化全局变量，C/Rust 语义要求初始值为 0）
     ldr     x0, =_start_bss
@@ -149,9 +141,7 @@ _start:
     cmp     x0, x1
     b.lt    .bss_loop
 .bss_done:
-    uart_putc '3'               // 输出 '3'：BSS 清零完成
 
-    uart_putc '4'               // 输出 '4'：即将跳转 kernel_main
     bl      kernel_main
 
     b       .

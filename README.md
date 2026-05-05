@@ -123,7 +123,7 @@ AmiOS/
 ### 第一章：应用程序与基本执行环境（2026-05-01）
 
 - 建立 ARMv8 裸机项目
-- 实现 EL2 → EL1 异常级别切换（ARMv8 特有，RISC-V 原版无此步骤）
+- 实现异常级别检测与初始化（EL2 直接运行 / EL1 降级两条路径，ARMv8 特有）
 - 实现 PL011 UART 驱动与 `print!`/`println!` 宏
 - 实现 `panic handler` 与基础运行时（`no_std`/`no_main`）
 - 实现全局分配器占位（当前不支持堆分配）
@@ -154,3 +154,104 @@ AmiOS/
 - 实现从 EFI 简单文件系统读取 `amios-kernel-d2000.bin`，复制到 `0x80080000`，调用 `ExitBootServices()` 后跳转执行内核
 - Makefile 新增 `make loader` 构建目标
 - 新增 UEFI Shell 启动流程文档（`FS0:\loader.efi` 一键启动）
+
+### 飞腾 D2000 硬件调试与适配（2026-05-02）
+
+- 修复链接脚本未随 `PLATFORM` 变量重新生成导致内核加载到错误地址的问题（改为两个独立链接脚本）
+- 修复 loader 内存分配未包含栈空间导致启动时踩坏 UEFI 数据的问题
+- 修复 `SCTLR_EL1` RES1 位被清零导致 UNPREDICTABLE 行为（改为 `mrs/bic/msr` 只清目标位）
+- 修复 `VBAR_EL1/EL2` 未初始化导致异常跳到已失效 UEFI 向量表的问题
+- 修复 `-Wa,--defsym` 不被 LLVM 汇编器支持导致调试探针全部为空操作的问题（改用 `build.rs` 生成 `platform.inc`）
+- 修复 `uart_putc` 宏标号冲突与 `uart_debug_init` 调用时序问题
+- 确认飞腾 D2000 平台设计：固件始终在 EL2 交接，`HCR_EL2.TGE=1` 由 EDK2 锁定，EL2→EL1 降级不可行（原生 Linux dmesg 证实：`All CPU(s) started at EL2`）
+- 内核改为直接在 EL2（VHE 模式）运行，与飞腾官方 Linux 行为一致
+- D2000 硬件验证通过，串口输出完整启动横幅
+
+---
+
+## 待解决问题
+
+以下问题在代码审查中发现，按优先级排序。
+
+### 严重（功能扩展后会静默出错）
+
+**[BUG] boot.S BSS 清零使用 `adr` 而非绝对地址寻址**
+
+`adr` 是 PC 相对寻址，范围仅 ±1MB。内核加载在 `0x40080000`，BSS 段若超出范围会静默跳过清零，导致全局变量初始值不确定。
+应改为 `ldr x0, =_start_bss` / `ldr x1, =_end_bss`（字面量池绝对地址）。
+位置：[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
+
+**[BUG] loader 内核入口地址与链接脚本硬编码重复，两处不同步会静默失败**
+
+`loader/src/main.rs` 直接跳转 `0x80080000`，`linker-d2000.lds` 里也定义了同一地址，两处独立维护。
+修改链接脚本加载地址时若忘记同步 loader，会跳到错误地址且无任何报错。
+应从 ELF 头读取入口地址，或将该常量提取为 workspace 级共享定义。
+位置：[loader/src/main.rs](loader/src/main.rs)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
+
+**[BUG] 链接脚本缺少 `_stack_bottom` 符号，栈溢出无法检测**
+
+栈定义在 BSS 之后，溢出会静默覆盖 BSS 数据，没有任何检测手段。
+应在链接脚本中加 `_stack_bottom` 符号，后续启用 MMU 后可设置 guard page。
+位置：[kernel/linker-qemu.lds](kernel/linker-qemu.lds)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
+
+**[设计] UART 无锁访问，多核/中断场景下会产生输出竞争**
+
+`print!` 宏每次重新构造 `Uart` 实例直接写 MMIO，多核或中断上下文同时调用会导致输出乱序甚至数据竞争。
+应在现在就用自旋锁（`spin::Mutex` 或手写）包装 UART 实例，避免后续加多核时大规模重构。
+位置：[kernel/src/kernel/io.rs](kernel/src/kernel/io.rs)、[kernel/src/drivers/uart/pl011.rs](kernel/src/drivers/uart/pl011.rs)
+
+---
+
+### 中等（设计不合理，后续维护负担）
+
+**[设计] 两个链接脚本内容完全重复，只有基地址不同**
+
+`linker-qemu.lds` 和 `linker-d2000.lds` 除 `KERNEL_BASE` 外完全一致，修改链接脚本结构时需同步两处。
+建议恢复模板方案（`linker.lds.S` + C 预处理），或用 `PROVIDE` + Makefile `--defsym` 传入基地址。
+位置：[kernel/linker-qemu.lds](kernel/linker-qemu.lds)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
+
+**[设计] `NoHeapAllocator` 注册后运行时 panic，不如不注册让编译器报错**
+
+注册一个永远 panic 的 allocator，意外触发堆分配时只能在运行时发现。
+不注册 `#[global_allocator]` 时，编译器会在有堆分配的地方直接报错，更安全。
+位置：[kernel/src/kernel/mod.rs](kernel/src/kernel/mod.rs)
+
+**[设计] `build.rs` 生成 `platform.inc` 再用 `include_str!` 内联的方案过于 hacky**
+
+依赖 `global_asm!` 字符串拼接行为，不是标准汇编条件编译方式。
+更规范的做法：用 `cc` crate 编译汇编并传 `-D` 宏，或将平台相关汇编拆成独立 `.S` 文件用 `cfg_attr` 选择。
+位置：[kernel/build.rs](kernel/build.rs)、[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
+
+**[调试] EL3 检测到后直接死循环，无任何输出，无法调试**
+
+boot.S 检测到 EL3 就 `b .`，此时 UART 未初始化，完全无法判断是否进入了该分支。
+D2000 平台已有早期 UART 宏（`UART_SEND_STR`），应在死循环前输出错误信息。
+位置：[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
+
+---
+
+### 轻微（小坑，顺手可修）
+
+**[配置] `tests/` crate 缺少 `.cargo/config.toml`，直接 `cargo test` 会用错 target**
+
+根目录 `.cargo/config.toml` 默认 target 是 `aarch64-unknown-none`，在 `tests/` 目录下直接运行 `cargo test` 会失败。
+应给 `tests/` 加 `.cargo/config.toml` 设置 `default-target = "x86_64-unknown-linux-gnu"`。
+位置：[tests/](tests/)
+
+**[配置] `kernel/.cargo/config.toml` 是过时的冗余文件**
+
+注释说链接脚本已移到 Makefile 的 `RUSTFLAGS`，但文件本身还留着旧内容，容易误导。
+应删除或清空该文件，只保留说明性注释。
+位置：[kernel/.cargo/config.toml](kernel/.cargo/config.toml)
+
+**[配置] `user/` crate 是空占位但已加入 workspace，可能干扰构建**
+
+每次 `cargo build` 都会尝试编译 `user/`，若其 target 配置不正确会产生奇怪错误。
+建议在根 `Cargo.toml` 加 `exclude = ["user"]`，等第五章实现时再加回来。
+位置：[Cargo.toml](Cargo.toml)
+
+**[正确性] UART 波特率常量应加编译期断言**
+
+IBRD/FBRD 是手算常量，`tests/` 里有运行时验证，但可以更早暴露错误。
+加 `const _: () = assert!(UART_IBRD == 13, "...")` 让错误在编译时就报出来。
+位置：[kernel/src/drivers/uart/pl011.rs](kernel/src/drivers/uart/pl011.rs)
