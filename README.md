@@ -26,7 +26,6 @@ make debug
 |---|---|
 | `make build` | 编译内核（QEMU virt，默认） |
 | `make build PLATFORM=PHYTIUM_D2000` | 编译内核（飞腾 D2000） |
-| `make loader` | 编译 UEFI 加载器（飞腾 D2000 用，产物 `loader.efi`） |
 | `make run` | 在 QEMU virt 中运行 |
 | `make debug` | 启动 QEMU 等待 GDB 连接（端口 1234） |
 | `make objdump` | 反汇编查看生成代码 |
@@ -44,26 +43,24 @@ make debug
 
 ## 飞腾 D2000 — UEFI 加载器启动流程
 
-飞腾 D2000 通过 UEFI 固件启动，UEFI Shell 只能执行 `.efi` 文件，无法直接加载裸机二进制。`loader/` crate 提供一个极简 UEFI 加载器解决此问题。
+飞腾 D2000 通过 UEFI 固件启动，UEFI Shell 只能执行 `.efi` 文件，无法直接加载裸机二进制。UEFI 加载器已独立为 [Amiboot](https://github.com/ichigyu/Amiboot) 仓库。
 
 ### 编译
 
 ```bash
 make build PLATFORM=PHYTIUM_D2000   # 编译内核二进制
-make loader                          # 编译 UEFI 加载器
+# 加载器编译见 Amiboot 仓库
 ```
 
 产物：
 - `target/aarch64-unknown-none/release/amios-kernel-d2000.bin`
-- `target/aarch64-unknown-uefi/release/loader.efi`
 
 ### 通过 TFTP 启动
 
-在开发机上启动 TFTP 服务，将两个产物放入 TFTP 根目录：
+在开发机上启动 TFTP 服务，将内核二进制和 Amiboot 产物放入 TFTP 根目录：
 
 ```bash
 cp target/aarch64-unknown-none/release/amios-kernel-d2000.bin /srv/tftp/
-cp target/aarch64-unknown-uefi/release/loader.efi /srv/tftp/
 ```
 
 在 UEFI Shell 中配置网络并下载文件：
@@ -105,11 +102,6 @@ AmiOS/
 │       └── kernel/
 │           ├── mod.rs       panic handler、全局分配器占位、kernel_main
 │           └── io.rs        print!/println! 宏
-├── loader/                  UEFI 加载器 crate（飞腾 D2000 用）
-│   ├── Cargo.toml           依赖 uefi crate，目标 aarch64-unknown-uefi
-│   ├── .cargo/config.toml   默认编译目标 aarch64-unknown-uefi
-│   └── src/
-│       └── main.rs          UEFI 入口：读取内核 → 复制到 0x80080000 → 跳转执行
 ├── user/                    用户态程序（第五章实现，当前占位）
 ├── tests/                   host 单元测试 crate
 │   └── src/lib.rs           波特率常量等纯逻辑验证
@@ -166,6 +158,11 @@ AmiOS/
 - 确认飞腾 D2000 平台设计：固件始终在 EL2 交接，`HCR_EL2.TGE=1` 由 EDK2 锁定，EL2→EL1 降级不可行（原生 Linux dmesg 证实：`All CPU(s) started at EL2`）
 - 内核改为直接在 EL2（VHE 模式）运行，与飞腾官方 Linux 行为一致
 - D2000 硬件验证通过，串口输出完整启动横幅
+- 修复 boot.S BSS 清零使用 `adr` 导致 PC 相对寻址范围不足的问题（改为 `ldr x0, =_start_bss` 字面量池绝对地址）
+
+### UEFI 加载器解耦（2026-05-06）
+
+- 将 `loader/` crate 从 AmiOS 仓库移除，独立为 [Amiboot](https://github.com/ichigyu/Amiboot) 仓库维护
 
 ---
 
@@ -174,19 +171,6 @@ AmiOS/
 以下问题在代码审查中发现，按优先级排序。
 
 ### 严重（功能扩展后会静默出错）
-
-**[BUG] boot.S BSS 清零使用 `adr` 而非绝对地址寻址**
-
-`adr` 是 PC 相对寻址，范围仅 ±1MB。内核加载在 `0x40080000`，BSS 段若超出范围会静默跳过清零，导致全局变量初始值不确定。
-应改为 `ldr x0, =_start_bss` / `ldr x1, =_end_bss`（字面量池绝对地址）。
-位置：[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
-
-**[BUG] loader 内核入口地址与链接脚本硬编码重复，两处不同步会静默失败**
-
-`loader/src/main.rs` 直接跳转 `0x80080000`，`linker-d2000.lds` 里也定义了同一地址，两处独立维护。
-修改链接脚本加载地址时若忘记同步 loader，会跳到错误地址且无任何报错。
-应从 ELF 头读取入口地址，或将该常量提取为 workspace 级共享定义。
-位置：[loader/src/main.rs](loader/src/main.rs)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
 
 **[BUG] 链接脚本缺少 `_stack_bottom` 符号，栈溢出无法检测**
 
