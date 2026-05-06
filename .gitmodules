@@ -1,0 +1,3 @@
+[submodule "tools/Amiboot"]
+	path = tools/Amiboot
+	url = https://github.com/ichigyu/Amiboot.git
