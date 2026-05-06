@@ -9,8 +9,9 @@
  *   KERNEL_BASE  .text   代码段
  *                .rodata 只读数据段
  *                .data   已初始化全局变量
- *                .bss    未初始化全局变量（运行时清零）
- *                _stack_top  栈顶（向低地址增长，512KB）
+ *                .bss         未初始化全局变量（运行时清零）
+ *                _stack_bottom  栈底（低地址边界，溢出检测 / guard page 用）
+ *                _stack_top     栈顶（向低地址增长，512KB）
  * ============================================================ */
 
 ENTRY(_start)
@@ -47,8 +48,10 @@ SECTIONS
     }
 
     /* 栈空间：紧跟在 BSS 段之后，预留 512KB
-     * ARMv8 栈向低地址增长，所以栈顶是高地址 */
+     * ARMv8 栈向低地址增长，所以 _stack_bottom 是低地址边界，_stack_top 是高地址起始点
+     * _stack_bottom 供后续 MMU guard page 和运行时溢出检测使用 */
     . = ALIGN(4096);
+    _stack_bottom = .;
     . += 0x80000;
     _stack_top = .;
 

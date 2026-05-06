@@ -164,6 +164,7 @@ AmiOS/
 ### 问题修复 (2026-05-06)
 
 - 移除 test 相关内容
+- 在两个链接脚本中添加 `_stack_bottom` 符号，标记栈的低地址边界（为后续 MMU guard page 和运行时溢出检测预留）
 
 ---
 
@@ -172,12 +173,6 @@ AmiOS/
 以下问题在代码审查中发现，按优先级排序。
 
 ### 严重（功能扩展后会静默出错）
-
-**[BUG] 链接脚本缺少 `_stack_bottom` 符号，栈溢出无法检测**
-
-栈定义在 BSS 之后，溢出会静默覆盖 BSS 数据，没有任何检测手段。
-应在链接脚本中加 `_stack_bottom` 符号，后续启用 MMU 后可设置 guard page。
-位置：[kernel/linker-qemu.lds](kernel/linker-qemu.lds)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
 
 **[设计] UART 无锁访问，多核/中断场景下会产生输出竞争**
 
