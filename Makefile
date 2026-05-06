@@ -16,16 +16,20 @@
 PLATFORM ?= QEMU_VIRT
 
 ifeq ($(PLATFORM),PHYTIUM_D2000)
-  CARGO_FEATURES := --no-default-features --features phytium-d2000
+  CARGO_FEATURES  := --no-default-features --features phytium-d2000
   KERNEL_BIN_NAME := amios-kernel-d2000.bin
-  LINKER_SCRIPT := kernel/linker-d2000.lds
-  ASM_DEFS :=
+  CPP_DEFS        := -DPHYTIUM_D2000
 else
-  CARGO_FEATURES :=
+  CARGO_FEATURES  :=
   KERNEL_BIN_NAME := amios-kernel-qemu.bin
-  LINKER_SCRIPT := kernel/linker-qemu.lds
-  ASM_DEFS :=
+  CPP_DEFS        := -DQEMU_VIRT
 endif
+
+# 生成的链接脚本（由 linker.lds.S 预处理而来，已加入 .gitignore）
+LINKER_SCRIPT     := kernel/linker.lds
+LINKER_SCRIPT_SRC := kernel/linker.lds.S
+# 平台戳文件：记录上次构建的平台，切换平台时触发链接脚本重新生成
+PLATFORM_STAMP    := kernel/.platform_stamp
 
 # ── 工具链配置 ────────────────────────────────────────────────
 # 链接脚本预处理用系统 C 编译器（gcc/clang 均可，只用 -E 预处理功能）
@@ -46,15 +50,28 @@ CARGO_FLAGS := --manifest-path kernel/Cargo.toml
 all: build
 
 # ── 编译内核 ──────────────────────────────────────────────────
-# 直接用平台对应的链接脚本，不需要预处理
-# RUSTFLAGS 通过环境变量传入链接脚本路径，覆盖 .cargo/config.toml 中的默认值
-build:
-	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT) $(ASM_DEFS)" \
+# 先用 C 预处理器将 linker.lds.S 展开为 linker.lds，再编译内核
+# -E：只做预处理  -P：去掉行号注释  -x c：以 C 语法解析（支持 // 注释）
+build: $(LINKER_SCRIPT)
+	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT)" \
 		cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 	@echo "Build complete (PLATFORM=$(PLATFORM)):"
 	@echo "  ELF: $(KERNEL_ELF)"
 	@echo "  BIN: $(KERNEL_BIN)"
+
+# 预处理链接脚本模板，生成平台对应的 linker.lds
+# 依赖平台戳文件：切换 PLATFORM 时戳文件内容变化，触发重新预处理
+$(LINKER_SCRIPT): $(LINKER_SCRIPT_SRC) $(PLATFORM_STAMP)
+	$(CC) -E -P -x c $(CPP_DEFS) $< -o $@
+
+# 平台戳文件：内容为当前 PLATFORM 值，切换平台时由 shell 比较后更新
+$(PLATFORM_STAMP): FORCE
+	@if [ "$$(cat $@ 2>/dev/null)" != "$(PLATFORM)" ]; then \
+		echo "$(PLATFORM)" > $@; \
+	fi
+
+.PHONY: FORCE
 
 # ── 在 QEMU 中运行 ────────────────────────────────────────────
 # QEMU 参数说明：
@@ -105,4 +122,5 @@ objdump: build
 # ── 清理构建产物 ──────────────────────────────────────────────
 clean:
 	cargo clean $(CARGO_FLAGS)
+	rm -f $(LINKER_SCRIPT) $(PLATFORM_STAMP)
 	@echo "Clean complete"

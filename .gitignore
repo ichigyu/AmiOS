@@ -3,5 +3,6 @@ openspec
 CLAUDE.md
 target
 kernel/linker.lds
+kernel/.platform_stamp
 kernel/src/arch/aarch64/platform.inc
 docs

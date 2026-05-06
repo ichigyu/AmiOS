@@ -165,6 +165,7 @@ AmiOS/
 
 - 移除 test 相关内容
 - 在两个链接脚本中添加 `_stack_bottom` 符号，标记栈的低地址边界（为后续 MMU guard page 和运行时溢出检测预留）
+- 将 `linker-qemu.lds` 和 `linker-d2000.lds` 合并为 `linker.lds.S` 模板，由 Makefile 用 C 预处理器生成平台对应的 `linker.lds`
 
 ---
 
@@ -183,12 +184,6 @@ AmiOS/
 ---
 
 ### 中等（设计不合理，后续维护负担）
-
-**[设计] 两个链接脚本内容完全重复，只有基地址不同**
-
-`linker-qemu.lds` 和 `linker-d2000.lds` 除 `KERNEL_BASE` 外完全一致，修改链接脚本结构时需同步两处。
-建议恢复模板方案（`linker.lds.S` + C 预处理），或用 `PROVIDE` + Makefile `--defsym` 传入基地址。
-位置：[kernel/linker-qemu.lds](kernel/linker-qemu.lds)、[kernel/linker-d2000.lds](kernel/linker-d2000.lds)
 
 **[设计] `NoHeapAllocator` 注册后运行时 panic，不如不注册让编译器报错**
 

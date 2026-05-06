@@ -1,24 +1,34 @@
 /* ============================================================
- * AmiOS 内核链接脚本 — QEMU virt 平台
+ * AmiOS 内核链接脚本模板
  *
- * 内存布局：
- *   0x40000000  RAM 起始
- *   0x40080000  内核加载地址（_start 入口）
- *               低于此地址的空间留给设备树（DTB）等固件数据
+ * 此文件由 C 预处理器处理后生成 linker.lds，不可直接使用。
+ * 构建时由 Makefile 执行：$(CC) -E -P -D<PLATFORM> linker.lds.S -o linker.lds
  *
- *   KERNEL_BASE  .text   代码段
- *                .rodata 只读数据段
- *                .data   已初始化全局变量
- *                .bss         未初始化全局变量（运行时清零）
+ * 平台基地址：
+ *   QEMU_VIRT      0x40080000  （RAM 起始 0x40000000，低地址留给 DTB）
+ *   PHYTIUM_D2000  0x80080000  （RAM 起始 0x80000000，低地址留给 UEFI 参数）
+ *
+ * 内存布局（从低到高）：
+ *   KERNEL_BASE  .text          代码段
+ *                .rodata        只读数据段
+ *                .data          已初始化全局变量
+ *                .bss           未初始化全局变量（运行时清零）
  *                _stack_bottom  栈底（低地址边界，溢出检测 / guard page 用）
  *                _stack_top     栈顶（向低地址增长，512KB）
  * ============================================================ */
+
+#if defined(PHYTIUM_D2000)
+  #define KERNEL_BASE 0x80080000
+#else
+  /* 默认：QEMU virt */
+  #define KERNEL_BASE 0x40080000
+#endif
 
 ENTRY(_start)
 
 SECTIONS
 {
-    . = 0x40080000;
+    . = KERNEL_BASE;
 
     /* .text 段：存放所有可执行代码
      * KEEP(.text.boot) 确保启动代码不被链接器优化掉 */
