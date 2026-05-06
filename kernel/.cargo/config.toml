@@ -1,19 +1,12 @@
 # kernel/ 本地 Cargo 配置（仅在直接从 kernel/ 目录运行 cargo 时生效）
-# workspace 根的 .cargo/config.toml 才是实际生效的配置
-# 此文件保留作为参考，链接脚本路径在根配置中已更新为 kernel/linker.ld
+#
+# 注意：链接脚本由 Makefile 通过 RUSTFLAGS="-C link-arg=-Tkernel/linker.lds" 传入。
+# 请始终通过项目根目录的 make build 编译，不要直接在此目录运行 cargo build。
+#
+# 此文件保留是为了让 rust-analyzer 等工具能识别 target，不含任何实际构建配置。
 
 [build]
-# 默认编译目标：ARMv8 裸机，无操作系统、无标准库
-# 等效于每次 cargo build 都加 --target aarch64-unknown-none
 target = "aarch64-unknown-none"
 
 [target.aarch64-unknown-none]
-# 链接器参数：
-#   -T linker.ld  使用项目根目录的自定义链接脚本，控制内存布局
-rustflags = [
-    "-C", "link-arg=-Tlinker.ld",
-]
-
-# 使用 LLVM 的 lld 链接器（比系统 ld 更好地支持裸机目标）
-# 如果系统没有安装 lld，可以改用 aarch64-linux-gnu-ld
 linker = "rust-lld"

@@ -1,6 +1,5 @@
 # Cargo workspace 根配置
 # 编译目标和链接参数在此处配置，对 kernel/ crate 生效
-# tests/ crate 通过 make test --target x86_64-unknown-linux-gnu 覆盖此目标
 
 [build]
 # 默认编译目标：ARMv8 裸机，无操作系统、无标准库
