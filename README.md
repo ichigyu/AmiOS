@@ -167,6 +167,7 @@ AmiOS/
 - 在两个链接脚本中添加 `_stack_bottom` 符号，标记栈的低地址边界（为后续 MMU guard page 和运行时溢出检测预留）
 - 将 `linker-qemu.lds` 和 `linker-d2000.lds` 合并为 `linker.lds.S` 模板，由 Makefile 用 C 预处理器生成平台对应的 `linker.lds`
 - 清理 `kernel/.cargo/config.toml`：移除旧的 `-Tlinker.ld` rustflags，保留 target 和 linker 配置供 rust-analyzer 使用
+- 移除 `NoHeapAllocator`：`aarch64-unknown-none` 目标无 `alloc` crate，堆分配在编译期即不可用，运行时占位无意义
 
 ---
 
@@ -184,15 +185,7 @@ AmiOS/
 
 ---
 
-### 中等（设计不合理，后续维护负担）
-
-**[设计] `NoHeapAllocator` 注册后运行时 panic，不如不注册让编译器报错**
-
-注册一个永远 panic 的 allocator，意外触发堆分配时只能在运行时发现。
-不注册 `#[global_allocator]` 时，编译器会在有堆分配的地方直接报错，更安全。
-位置：[kernel/src/kernel/mod.rs](kernel/src/kernel/mod.rs)
-
-**[设计] `build.rs` 生成 `platform.inc` 再用 `include_str!` 内联的方案过于 hacky**
+### 中等（设计不合理，后续维护负担）**[设计] `build.rs` 生成 `platform.inc` 再用 `include_str!` 内联的方案过于 hacky**
 
 依赖 `global_asm!` 字符串拼接行为，不是标准汇编条件编译方式。
 更规范的做法：用 `cc` crate 编译汇编并传 `-D` 宏，或将平台相关汇编拆成独立 `.S` 文件用 `cfg_attr` 选择。

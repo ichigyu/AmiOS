@@ -24,16 +24,7 @@ pub mod mmio {
     /// QEMU virt 板第一个串口，用于内核调试输出
     pub const UART0_BASE: usize = 0x0900_0000;
 
-    /// GIC（通用中断控制器）分发器基地址
-    /// GICv2 架构，后续章节实现中断时使用
-    pub const GIC_DIST_BASE: usize = 0x0800_0000;
-
-    /// GIC CPU 接口基地址
-    /// 每个 CPU 核心通过此地址与 GIC 交互
-    pub const GIC_CPU_BASE: usize = 0x0801_0000;
-
     /// 物理内存（RAM）起始地址
-    /// QEMU virt 板的 RAM 从此地址开始
     pub const RAM_BASE: usize = 0x4000_0000;
 
     /// 内核加载地址（_start 入口）

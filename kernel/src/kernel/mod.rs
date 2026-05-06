@@ -3,7 +3,6 @@
 // │                                                             │
 // │  职责：提供内核运行时基础设施，包括：                        │
 // │    - panic handler（崩溃处理）                              │
-// │    - 全局分配器占位（当前不支持堆分配）                      │
 // │    - kernel_main（Rust 层内核入口）                          │
 // │                                                             │
 // │  调用关系：                                                  │
@@ -18,10 +17,6 @@ mod io;
 #[allow(unused_imports)]
 use crate::{print, println};
 use crate::bsp::BOARD_NAME;
-
-use core::alloc::{GlobalAlloc, Layout};
-
-// ── Panic Handler ─────────────────────────────────────────────
 // 当代码触发 panic（如数组越界、unwrap None 等）时，此函数被调用
 // 裸机环境无法展开栈，只能输出错误信息后停机
 
@@ -47,27 +42,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     }
 }
 
-// ── 全局分配器占位 ────────────────────────────────────────────
-// 当前阶段不支持堆内存分配（Box、Vec 等）
-// 此占位实现会在调用时触发 panic，给出明确的错误提示
-// 后续章节（内存管理）将替换为真实的堆分配器
-
-/// 占位全局分配器：当前阶段不支持堆分配
-pub struct NoHeapAllocator;
-
-// SAFETY: 此分配器的 alloc 和 dealloc 都会 panic，
-// 不会真正分配内存，因此实现是安全的（虽然无用）
-unsafe impl GlobalAlloc for NoHeapAllocator {
-    unsafe fn alloc(&self, _layout: Layout) -> *mut u8 {
-        panic!("heap allocation not yet implemented (coming in a later chapter)")
-    }
-
-    unsafe fn dealloc(&self, _ptr: *mut u8, _layout: Layout) {
-        panic!("heap deallocation not yet implemented (coming in a later chapter)")
-    }
-}
-
-// ── 内核主函数 ────────────────────────────────────────────────
+// ── Panic Handler ─────────────────────────────────────────────
 
 /// 内核 Rust 层入口函数
 ///
