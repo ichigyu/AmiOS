@@ -1,5 +1,5 @@
 // ┌─────────────────────────────────────────────────────────────┐
-// │  arch/aarch64/boot.S — ARMv8 裸机启动汇编                   │
+// │  arch/aarch64/boot/boot.S — ARMv8 裸机启动汇编              │
 // │                                                             │
 // │  职责：从固件上电到进入 Rust kernel_main 的完整引导链        │
 // │                                                             │
@@ -24,11 +24,6 @@
 // │            ├─→ 设置栈指针 SP                                │
 // │            ├─→ 清零 BSS 段                                  │
 // │            └─→ 跳转到 kernel_main                           │
-// │                                                             │
-// │  平台相关宏（uart_debug_init / uart_putc）由 boot.rs 通过    │
-// │  #[cfg(feature)] 选择对应的平台文件，在本文件之前内联：      │
-// │    phytium-d2000 → uart_debug_phytium.S（真实 UART 实现）   │
-// │    qemu-virt     → uart_debug_qemu.S（空实现）              │
 // └─────────────────────────────────────────────────────────────┘
 
 // 将 _start 放入 .text.boot 段，链接脚本保证它位于 KERNEL_BASE
@@ -39,9 +34,6 @@
 // 固件加载内核后，所有 CPU 核心都会从这里开始执行
 // 我们只让 CPU0 继续，其余核心进入低功耗等待状态
 _start:
-    // 最先初始化调试 UART 基地址寄存器（x20），后续所有 uart_putc 依赖它
-    uart_debug_init
-
     // 读取当前 CPU 编号（MPIDR_EL1 寄存器的低 8 位是 CPU ID）
     mrs     x0, mpidr_el1       // 读取多处理器亲和寄存器
     and     x0, x0, #0xFF       // 提取 Aff0 字段（CPU 编号）

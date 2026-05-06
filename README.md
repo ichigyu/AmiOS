@@ -177,25 +177,7 @@ AmiOS/
 - 清理 `kernel/.cargo/config.toml`：移除旧的 `-Tlinker.ld` rustflags，保留 target 和 linker 配置供 rust-analyzer 使用
 - 移除 `NoHeapAllocator`：`aarch64-unknown-none` 目标无 `alloc` crate，堆分配在编译期即不可用，运行时占位无意义
 
----
 
-## 待解决问题
-
-以下问题在代码审查中发现，按优先级排序。
-
-### 严重（功能扩展后会静默出错）
-
-**[设计] UART 无锁访问，多核/中断场景下会产生输出竞争**
-
-`print!` 宏每次重新构造 `Uart` 实例直接写 MMIO，多核或中断上下文同时调用会导致输出乱序甚至数据竞争。
-应在现在就用自旋锁（`spin::Mutex` 或手写）包装 UART 实例，避免后续加多核时大规模重构。
-位置：[kernel/src/kernel/io.rs](kernel/src/kernel/io.rs)、[kernel/src/drivers/uart/pl011.rs](kernel/src/drivers/uart/pl011.rs)
-
----
-
-### 中等（设计不合理，后续维护负担）
-
-（当前无）
 
 
 
