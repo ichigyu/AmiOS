@@ -25,40 +25,15 @@
 // │            ├─→ 清零 BSS 段                                  │
 // │            └─→ 跳转到 kernel_main                           │
 // │                                                             │
-// │  平台标志：由 boot.rs 通过 concat!(include_str!(env!(...)))  │
-// │            将 build.rs 生成的 platform.inc 内联到本文件前    │
-// │            phytium-d2000 → PHYTIUM_D2000 符号已定义         │
-// │            qemu-virt     → 无符号定义                        │
+// │  平台相关宏（uart_debug_init / uart_putc）由 boot.rs 通过    │
+// │  #[cfg(feature)] 选择对应的平台文件，在本文件之前内联：      │
+// │    phytium-d2000 → uart_debug_phytium.S（真实 UART 实现）   │
+// │    qemu-virt     → uart_debug_qemu.S（空实现）              │
 // └─────────────────────────────────────────────────────────────┘
 
 // 将 _start 放入 .text.boot 段，链接脚本保证它位于 KERNEL_BASE
 .section .text.boot
 .global _start          // 导出 _start 符号，链接脚本的 ENTRY 指向它
-
-// ── UART 直写辅助宏（仅用于启动阶段调试）─────────────────────
-// 在 Rust 运行时就绪之前，通过直接写 MMIO 寄存器输出单个字符
-// 由 build.rs 生成的 platform.inc 控制是否定义 PHYTIUM_D2000，
-// 避免 QEMU 上访问 D2000 的 UART 地址（0x28001000）触发异常卡死
-.ifdef PHYTIUM_D2000
-.macro uart_debug_init
-    ldr     x20, =0x28001000    // D2000 PL011 UART1 基地址（ttyAMA0）
-.endm
-// uart_putc：轮询 TXFF（bit5），等待发送 FIFO 有空间后写入字符
-// 使用 x19/x18 作为临时寄存器，x20 须已由 uart_debug_init 初始化
-// 用 \@ 生成每次展开唯一的标号，避免重复定义错误
-.macro uart_putc c
-    mov     w19, #\c
-.Ltxwait_\@:
-    ldr     w18, [x20, #0x18]
-    tbnz    w18, #5, .Ltxwait_\@
-    str     w19, [x20, #0x00]
-.endm
-.else
-.macro uart_debug_init
-.endm
-.macro uart_putc c
-.endm
-.endif
 
 // ── 内核入口 ──────────────────────────────────────────────────
 // 固件加载内核后，所有 CPU 核心都会从这里开始执行

@@ -90,8 +90,10 @@ AmiOS/
 │       ├── main.rs          crate 根：模块声明、全局分配器注册
 │       ├── arch/
 │       │   └── aarch64/
-│       │       ├── boot.S   ARMv8 汇编启动代码（EL 切换、BSS 清零）
-│       │       └── boot.rs  引入 boot.S（global_asm!）
+│       │       ├── boot.S                ARMv8 汇编启动代码（EL 切换、BSS 清零）
+│       │       ├── boot.rs               引入平台宏文件与 boot.S（global_asm!）
+│       │       ├── uart_debug_phytium.S  飞腾 D2000 启动期 UART 宏（真实实现）
+│       │       └── uart_debug_qemu.S     QEMU virt 启动期 UART 宏（空实现）
 │       ├── bsp/
 │       │   └── mod.rs       板级支持包：各平台 MMIO 地址常量、板名（feature 条件编译）
 │       ├── drivers/
@@ -161,6 +163,12 @@ AmiOS/
 
 - 将 `loader/` crate 从 AmiOS 仓库移除，独立为 [Amiboot](https://github.com/ichigyu/Amiboot) 仓库维护
 
+### 重构：平台汇编条件编译（2026-05-06）
+
+- 将 `boot.S` 中的 `.ifdef PHYTIUM_D2000 ... .endif` 块拆成独立文件：`uart_debug_phytium.S`（D2000 真实 UART 宏）和 `uart_debug_qemu.S`（空实现）
+- `boot.rs` 改用 `#[cfg(feature = "phytium-d2000")]` 在 Rust 层选择平台文件，两个文件与 `boot.S` 在同一 `global_asm!` 调用中内联，保证宏可见性
+- 删除 `build.rs`（原职责：生成 `platform.inc` 并注入 `PLATFORM_INC` 环境变量，已无必要）
+
 ### 问题修复 (2026-05-06)
 
 - 移除 test 相关内容
@@ -185,16 +193,9 @@ AmiOS/
 
 ---
 
-### 中等（设计不合理，后续维护负担）**[设计] `build.rs` 生成 `platform.inc` 再用 `include_str!` 内联的方案过于 hacky**
+### 中等（设计不合理，后续维护负担）
 
-依赖 `global_asm!` 字符串拼接行为，不是标准汇编条件编译方式。
-更规范的做法：用 `cc` crate 编译汇编并传 `-D` 宏，或将平台相关汇编拆成独立 `.S` 文件用 `cfg_attr` 选择。
-位置：[kernel/build.rs](kernel/build.rs)、[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
+（当前无）
 
-**[调试] EL3 检测到后直接死循环，无任何输出，无法调试**
-
-boot.S 检测到 EL3 就 `b .`，此时 UART 未初始化，完全无法判断是否进入了该分支。
-D2000 平台已有早期 UART 宏（`UART_SEND_STR`），应在死循环前输出错误信息。
-位置：[kernel/src/arch/aarch64/boot.S](kernel/src/arch/aarch64/boot.S)
 
 
