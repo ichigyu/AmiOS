@@ -1,19 +1,14 @@
-// ┌─────────────────────────────────────────────────────────────┐
-// │  kernel/mod.rs — 内核核心基础设施                           │
-// │                                                             │
-// │  职责：提供内核运行时基础设施，包括：                        │
-// │    - panic handler（崩溃处理）                              │
-// │    - kernel_main（Rust 层内核入口）                          │
-// │                                                             │
-// │  调用关系：                                                  │
-// │    arch/aarch64/boot.S (_start)                             │
-// │      └─→ kernel_main()              Rust 入口               │
-// │            ├─→ drivers::uart::init()  初始化串口             │
-// │            └─→ println!(...)          输出启动信息           │
-// └─────────────────────────────────────────────────────────────┘
+//! 内核核心基础设施
+//!
+//! 职责：提供内核运行时基础设施，包括 panic handler 和 `kernel_main` 入口。
+//!
+//! 调用关系：
+//! - `arch/aarch64/boot.S`（`_start`）→ `kernel_main()` → `drivers::uart::init()`
 
 mod io;
 
+// #[macro_export] 宏在子模块中不自动可见，必须显式 use；
+// rustc 对宏的 use 会误报 unused_imports，故需 allow
 #[allow(unused_imports)]
 use crate::{print, println};
 use crate::bsp::BOARD_NAME;
