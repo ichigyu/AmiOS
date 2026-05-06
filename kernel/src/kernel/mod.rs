@@ -5,13 +5,14 @@
 //! 调用关系：
 //! - `arch/aarch64/boot.S`（`_start`）→ `kernel_main()` → `drivers::uart::init()`
 
-mod io;
+mod console;
 
 // #[macro_export] 宏在子模块中不自动可见，必须显式 use；
 // rustc 对宏的 use 会误报 unused_imports，故需 allow
 #[allow(unused_imports)]
 use crate::{print, println};
 use crate::bsp::BOARD_NAME;
+use crate::psci;
 // 当代码触发 panic（如数组越界、unwrap None 等）时，此函数被调用
 // 裸机环境无法展开栈，只能输出错误信息后停机
 
@@ -30,11 +31,7 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
     // 输出 panic 消息（如 panic!("msg") 中的字符串）
     print!("\n{}\n", info.message());
 
-    // 进入无限循环，停止 CPU 执行
-    loop {
-        // aarch64 的低功耗等待指令，避免空转浪费功耗
-        core::hint::spin_loop();
-    }
+    psci::system_off()
 }
 
 // ── Panic Handler ─────────────────────────────────────────────
@@ -71,11 +68,7 @@ pub extern "C" fn kernel_main() -> ! {
     println!("  Arch:    AArch64 (ARMv8-A)");
     println!("  Board:   {}", BOARD_NAME);
     println!("================================================");
-    println!("Kernel booted successfully. Entering main loop...");
+    println!("Kernel booted successfully.");
 
-    // 主循环：当前阶段内核没有任务可做，进入低功耗等待
-    // 后续章节将在此处添加：进程调度、系统调用处理等
-    loop {
-        core::hint::spin_loop();
-    }
+    panic!("Shutdown via PSCI...")
 }
