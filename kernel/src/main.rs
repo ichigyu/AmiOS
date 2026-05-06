@@ -20,6 +20,8 @@ mod arch;
 // 使 drivers 和 kernel 子模块可以用 crate::bsp 访问板级常量
 #[cfg(target_arch = "aarch64")]
 pub use arch::aarch64::bsp;
+#[cfg(target_arch = "aarch64")]
+pub use arch::aarch64::psci;
 // 硬件驱动层
 pub mod drivers;
 // 内核核心基础设施（panic handler、kernel_main、print! 宏）

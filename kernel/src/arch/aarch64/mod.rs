@@ -8,3 +8,4 @@
 
 mod boot;
 pub mod bsp;
+pub mod psci;
