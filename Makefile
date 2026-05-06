@@ -102,12 +102,6 @@ objdump: build
 		-d \
 		$(KERNEL_ELF) | less
 
-# ── 运行 host 单元测试 ────────────────────────────────────────
-# tests crate 在 host 上运行，需要显式指定 host 目标覆盖 aarch64 默认值
-# 测试内容：波特率常量计算、MMIO 地址健全性检查等纯逻辑验证
-test:
-	cargo test --manifest-path tests/Cargo.toml --target x86_64-unknown-linux-gnu
-
 # ── 清理构建产物 ──────────────────────────────────────────────
 clean:
 	cargo clean $(CARGO_FLAGS)

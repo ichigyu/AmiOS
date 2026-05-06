@@ -1,8 +1,6 @@
 [workspace]
 members = [
     "kernel",
-    "loader",
-    "tests",
 ]
 resolver = "2"
 

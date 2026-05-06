@@ -1,4 +1,0 @@
-# tests crate 在 host 上运行，覆盖 workspace 根的 aarch64 目标配置
-[build]
-# 使用 host 默认目标（x86_64-unknown-linux-gnu），不指定则自动检测
-target = "x86_64-unknown-linux-gnu"

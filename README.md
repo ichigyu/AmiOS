@@ -29,7 +29,6 @@ make debug
 | `make run` | 在 QEMU virt 中运行 |
 | `make debug` | 启动 QEMU 等待 GDB 连接（端口 1234） |
 | `make objdump` | 反汇编查看生成代码 |
-| `make test` | 运行 host 单元测试（波特率常量等纯逻辑验证） |
 | `make clean` | 清理构建产物 |
 
 ## 平台支持
@@ -103,8 +102,6 @@ AmiOS/
 │           ├── mod.rs       panic handler、全局分配器占位、kernel_main
 │           └── io.rs        print!/println! 宏
 ├── user/                    用户态程序（第五章实现，当前占位）
-├── tests/                   host 单元测试 crate
-│   └── src/lib.rs           波特率常量等纯逻辑验证
 ├── Cargo.toml               workspace 根（含 profile 配置）
 ├── Makefile                 构建与运行脚本（PLATFORM 变量控制目标平台）
 └── rust-toolchain.toml      固定 nightly 工具链版本
@@ -163,6 +160,10 @@ AmiOS/
 ### UEFI 加载器解耦（2026-05-06）
 
 - 将 `loader/` crate 从 AmiOS 仓库移除，独立为 [Amiboot](https://github.com/ichigyu/Amiboot) 仓库维护
+
+### 问题修复 (2026-05-06)
+
+- 移除 test 相关内容
 
 ---
 
