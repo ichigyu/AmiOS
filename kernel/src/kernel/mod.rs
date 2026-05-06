@@ -39,16 +39,29 @@ fn panic(info: &core::panic::PanicInfo) -> ! {
 
 // ── Panic Handler ─────────────────────────────────────────────
 
+unsafe fn clear_bss() {
+    extern "C" {
+        static mut _start_bss: u64;
+        static _end_bss: u64;
+    }
+    let start = core::ptr::addr_of_mut!(_start_bss) as *mut u8;
+    let end = core::ptr::addr_of!(_end_bss) as *const u8;
+    let len = end as usize - start as usize;
+    core::ptr::write_bytes(start, 0, len);
+}
+
 /// 内核 Rust 层入口函数
 ///
 /// 由汇编启动代码（arch/aarch64/boot.S 中的 _start）在完成以下工作后调用：
-///   1. EL2 → EL1 异常级别切换
+///   1. EL 检测与系统寄存器初始化
 ///   2. 栈指针初始化
-///   3. BSS 段清零
 ///
 /// 此函数标注为 `-> !`（发散函数），永不返回
 #[no_mangle]
 pub extern "C" fn kernel_main() -> ! {
+    // BSS 段清零必须在任何静态变量使用之前完成
+    unsafe { clear_bss() }
+
     // 初始化 PL011 UART 串口，之后才能使用 print!/println!
     crate::drivers::uart::init();
 

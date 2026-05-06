@@ -49,7 +49,7 @@ SECTIONS
     }
 
     /* .bss 段：未初始化的全局变量，运行时必须清零
-     * 导出 _start_bss 和 _end_bss 供启动汇编代码使用 */
+     * 导出 _start_bss 和 _end_bss 供 Rust 启动代码使用 */
     .bss : ALIGN(4096) {
         _start_bss = .;
         *(.bss .bss.*)
