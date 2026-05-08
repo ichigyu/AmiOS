@@ -67,9 +67,9 @@ build: build-user $(LINKER_SCRIPT)
 	@echo "  BIN: $(KERNEL_BIN)"
 
 # ── 编译用户态应用程序 ────────────────────────────────────────
-# 每个应用独立链接到 BASE_ADDRESS=0x00100000，生成裸二进制
+# 每个应用独立链接到平台特定的 BASE_ADDRESS，生成裸二进制
 build-user:
-	cargo build --release --manifest-path user/Cargo.toml
+	cargo build --release --manifest-path user/Cargo.toml $(CARGO_FEATURES)
 	@for app in $(USER_APPS); do \
 		$(OBJCOPY) -O binary $(USER_BUILD_DIR)/$$app $(USER_BUILD_DIR)/$$app.bin; \
 		echo "  BIN: $(USER_BUILD_DIR)/$$app.bin"; \

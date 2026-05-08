@@ -7,7 +7,8 @@
 include!(concat!(env!("OUT_DIR"), "/app_list.rs"));
 
 /// 用户程序加载地址（与 user/src/linker.ld 中的 BASE_ADDRESS 一致）
-const APP_BASE_ADDRESS: usize = 0x40400000;
+/// 从 BSP 获取平台特定的应用基地址
+const APP_BASE_ADDRESS: usize = crate::bsp::mmio::APP_BASE_ADDRESS;
 
 pub struct AppManager;
 
