@@ -46,6 +46,11 @@ impl AppManager {
         // SAFETY: bin 来自 include_bytes!，指针有效；dst 指向已知可写的 RAM 区域
         core::ptr::copy_nonoverlapping(bin.as_ptr(), dst, bin.len());
 
+        // 清除缓存以确保指令一致性
+        // 在某些平台（如 Phytium D2000）上，加载应用后需要清除缓存
+        // 否则 I-cache 可能包含旧数据，导致执行错误的指令
+        Self::flush_cache(APP_BASE_ADDRESS, bin.len());
+
         // 为应用分配栈空间：在应用代码之后 1MB 处
         let app_stack_top = APP_BASE_ADDRESS + 0x10_0000;
 
@@ -58,6 +63,35 @@ impl AppManager {
             entry = in(reg) APP_BASE_ADDRESS,
             options(noreturn)
         );
+    }
+
+    /// 清除指定范围的缓存
+    /// 确保 D-cache 和 I-cache 一致
+    unsafe fn flush_cache(addr: usize, size: usize) {
+        // 获取缓存行大小（通常是 64 字节）
+        let cache_line_size = 64usize;
+
+        // 清除 D-cache
+        let mut current = addr;
+        let end = addr + size;
+        while current < end {
+            core::arch::asm!("dc cvau, {}", in(reg) current);
+            current += cache_line_size;
+        }
+
+        // 数据同步屏障
+        core::arch::asm!("dsb sy");
+
+        // 清除 I-cache
+        current = addr;
+        while current < end {
+            core::arch::asm!("ic ivau, {}", in(reg) current);
+            current += cache_line_size;
+        }
+
+        // 指令同步屏障
+        core::arch::asm!("dsb sy");
+        core::arch::asm!("isb");
     }
 
     pub fn app_count(&self) -> usize {
