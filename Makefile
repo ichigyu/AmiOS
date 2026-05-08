@@ -44,21 +44,36 @@ KERNEL_ELF  := target/$(TARGET)/release/amios-kernel
 KERNEL_BIN  := target/$(TARGET)/release/$(KERNEL_BIN_NAME)
 CARGO_FLAGS := --manifest-path kernel/Cargo.toml
 
+# ── 用户态应用程序配置 ────────────────────────────────────────
+USER_APPS       := hello_world store_fault power_off
+USER_TARGET     := aarch64-unknown-none
+USER_BUILD_DIR  := target/$(USER_TARGET)/release
+USER_BINS       := $(patsubst %,$(USER_BUILD_DIR)/%.bin,$(USER_APPS))
+
 # ── 默认目标 ──────────────────────────────────────────────────
-.PHONY: all build run debug objdump clean
+.PHONY: all build build-user run debug objdump clean
 
 all: build
 
 # ── 编译内核 ──────────────────────────────────────────────────
-# 先用 C 预处理器将 linker.lds.S 展开为 linker.lds，再编译内核
+# 先编译用户程序（build.rs 需要 ELF 已存在），再编译内核
 # -E：只做预处理  -P：去掉行号注释  -x c：以 C 语法解析（支持 // 注释）
-build: $(LINKER_SCRIPT)
+build: build-user $(LINKER_SCRIPT)
 	RUSTFLAGS="-C link-arg=-T$(LINKER_SCRIPT)" \
 		cargo build --release $(CARGO_FLAGS) $(CARGO_FEATURES)
 	$(OBJCOPY) -O binary $(KERNEL_ELF) $(KERNEL_BIN)
 	@echo "Build complete (PLATFORM=$(PLATFORM)):"
 	@echo "  ELF: $(KERNEL_ELF)"
 	@echo "  BIN: $(KERNEL_BIN)"
+
+# ── 编译用户态应用程序 ────────────────────────────────────────
+# 每个应用独立链接到 BASE_ADDRESS=0x00100000，生成裸二进制
+build-user:
+	cargo build --release --manifest-path user/Cargo.toml
+	@for app in $(USER_APPS); do \
+		$(OBJCOPY) -O binary $(USER_BUILD_DIR)/$$app $(USER_BUILD_DIR)/$$app.bin; \
+		echo "  BIN: $(USER_BUILD_DIR)/$$app.bin"; \
+	done
 
 # 预处理链接脚本模板，生成平台对应的 linker.lds
 # 依赖平台戳文件：切换 PLATFORM 时戳文件内容变化，触发重新预处理
@@ -122,5 +137,6 @@ objdump: build
 # ── 清理构建产物 ──────────────────────────────────────────────
 clean:
 	cargo clean $(CARGO_FLAGS)
+	cargo clean --manifest-path user/Cargo.toml
 	rm -f $(LINKER_SCRIPT) $(PLATFORM_STAMP)
 	@echo "Clean complete"

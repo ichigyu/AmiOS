@@ -13,29 +13,27 @@ mod console;
 use crate::{print, println};
 use crate::bsp::BOARD_NAME;
 use crate::psci;
-// 当代码触发 panic（如数组越界、unwrap None 等）时，此函数被调用
-// 裸机环境无法展开栈，只能输出错误信息后停机
 
 /// 内核 panic 处理函数
-/// 输出 panic 位置（文件名:行号）和错误消息，然后进入无限循环
+///
+/// 输出 panic 位置（文件名:行号）和错误消息，然后通过 PSCI 关机。
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    // 输出 panic 标题，醒目提示内核崩溃
     print!("\n\n[KERNEL PANIC]");
 
-    // 输出 panic 发生的源码位置（文件名和行号）
     if let Some(location) = info.location() {
         print!(" at {}:{}", location.file(), location.line());
     }
 
-    // 输出 panic 消息（如 panic!("msg") 中的字符串）
     print!("\n{}\n", info.message());
 
     psci::system_off()
 }
 
-// ── Panic Handler ─────────────────────────────────────────────
-
+/// # Safety
+///
+/// 调用者必须确保链接脚本正确导出了 `_start_bss` 和 `_end_bss`，
+/// 且在任何静态变量被访问之前调用此函数。
 unsafe fn clear_bss() {
     extern "C" {
         static mut _start_bss: u64;
@@ -59,10 +57,9 @@ pub extern "C" fn kernel_main() -> ! {
     // BSS 段清零必须在任何静态变量使用之前完成
     unsafe { clear_bss() }
 
-    // 初始化 PL011 UART 串口，之后才能使用 print!/println!
     crate::drivers::uart::init();
+    crate::arch::aarch64::trap::init();
 
-    // 输出启动横幅，确认内核成功进入 Rust 执行环境
     println!("================================================");
     println!("  AmiOS -- ARMv8 OS Kernel");
     println!("  Arch:    AArch64 (ARMv8-A)");
@@ -70,5 +67,7 @@ pub extern "C" fn kernel_main() -> ! {
     println!("================================================");
     println!("Kernel booted successfully.");
 
-    panic!("Shutdown via PSCI...")
+    let mgr = &crate::batch::APP_MANAGER;
+    mgr.list_apps();
+    unsafe { mgr.load_and_run(0) }
 }
