@@ -9,11 +9,15 @@ fn main() {
     let linker_src = PathBuf::from(&dir).join("src/linker.ld.S");
     let linker_out = PathBuf::from(&out_dir).join("linker.ld");
 
-    // 根据 Cargo feature 确定预处理器定义
-    let mut cpp_defs = Vec::new();
-    if cfg!(feature = "phytium-d2000") {
-        cpp_defs.push("-DPHYTIUM_D2000".to_string());
-    }
+    // 根据 Cargo feature 确定平台特定的地址常量
+    // APP_BASE_ADDRESS = KERNEL_BASE + KERNEL_RESERVED_SIZE
+    let (platform_def, app_base_address) = if cfg!(feature = "phytium-d2000") {
+        // Phytium D2000: KERNEL_BASE=0x80080000, KERNEL_RESERVED_SIZE=0x80000
+        ("-DPHYTIUM_D2000", "0x80100000")
+    } else {
+        // QEMU virt (default): KERNEL_BASE=0x40080000, KERNEL_RESERVED_SIZE=0x80000
+        ("-DQEMU_VIRT", "0x40100000")
+    };
 
     // 调用 C 预处理器生成最终的链接脚本
     let cc = env::var("CC").unwrap_or_else(|_| "gcc".to_string());
@@ -21,13 +25,10 @@ fn main() {
     cmd.arg("-E")
         .arg("-P")
         .arg("-x")
-        .arg("c");
-
-    for def in cpp_defs {
-        cmd.arg(def);
-    }
-
-    cmd.arg(&linker_src);
+        .arg("c")
+        .arg(platform_def)
+        .arg(format!("-DAPP_BASE_ADDRESS={}", app_base_address))
+        .arg(&linker_src);
 
     let output = cmd.output().expect("Failed to preprocess linker script");
 
