@@ -13,15 +13,33 @@ extern "C" {
     fn exception_vector_table();
 }
 
-/// 初始化异常向量表：将 VBAR_EL1 指向 exception_vector_table
+/// 初始化异常向量表：将 VBAR 指向 exception_vector_table
 pub fn init() {
+    // 检测当前异常级别
+    let current_el: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, CurrentEL", out(reg) current_el);
+    }
+    let el = (current_el >> 2) & 0x3;
+
     // SAFETY: exception_vector_table 是 2KB 对齐的合法向量表地址
     unsafe {
-        core::arch::asm!(
-            "msr vbar_el1, {vbar}",
-            "isb",
-            vbar = in(reg) exception_vector_table as *const () as usize,
-        );
+        let vbar = exception_vector_table as *const () as usize;
+        if el == 2 {
+            // EL2：设置 VBAR_EL2
+            core::arch::asm!(
+                "msr vbar_el2, {vbar}",
+                "isb",
+                vbar = in(reg) vbar,
+            );
+        } else {
+            // EL1：设置 VBAR_EL1
+            core::arch::asm!(
+                "msr vbar_el1, {vbar}",
+                "isb",
+                vbar = in(reg) vbar,
+            );
+        }
     }
 }
 
@@ -42,13 +60,24 @@ pub struct TrapContext {
 
 /// 同步异常处理入口（由 trap.S 的 sync_handler 调用）
 ///
-/// 判断异常类型：ESR_EL1.EC == 0x15 表示 SVC（AArch64）
+/// 判断异常类型：ESR_EL1/EL2.EC == 0x15 表示 SVC（AArch64）
 #[no_mangle]
 pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
-    let esr: u64;
-    // SAFETY: ESR_EL1 是只读系统寄存器，读取无副作用
+    // 检测当前异常级别
+    let current_el: u64;
     unsafe {
-        core::arch::asm!("mrs {}, esr_el1", out(reg) esr);
+        core::arch::asm!("mrs {}, CurrentEL", out(reg) current_el);
+    }
+    let el = (current_el >> 2) & 0x3;
+
+    let esr: u64;
+    // SAFETY: ESR_EL1/EL2 是只读系统寄存器，读取无副作用
+    unsafe {
+        if el == 2 {
+            core::arch::asm!("mrs {}, esr_el2", out(reg) esr);
+        } else {
+            core::arch::asm!("mrs {}, esr_el1", out(reg) esr);
+        }
     }
     let ec = (esr >> 26) & 0x3f;
 
@@ -58,7 +87,7 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
             use crate::println;
             println!("[trap] SVC: syscall_id={}, x0={:#x}, x1={:#x}, x2={:#x}",
                 ctx.x[8], ctx.x[0], ctx.x[1], ctx.x[2]);
-            println!("[trap] SVC: sp={:#x}, elr={:#x}", ctx.sp, ctx.elr);
+            println!("[trap] SVC: sp={:#x}, elr={:#x}, EL={}", ctx.sp, ctx.elr, el);
             let ret = crate::syscall::syscall(
                 ctx.x[8],
                 [ctx.x[0], ctx.x[1], ctx.x[2]],
@@ -68,7 +97,7 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
         }
         _ => {
             use crate::println;
-            println!("[trap] unhandled sync exception: EC={:#x} ESR={:#x}", ec, esr);
+            println!("[trap] unhandled sync exception: EC={:#x} ESR={:#x}, EL={}", ec, esr, el);
             println!("[trap] ELR={:#x}, SPSR={:#x}, SP={:#x}", ctx.elr, ctx.spsr, ctx.sp);
             crate::psci::system_off();
         }
