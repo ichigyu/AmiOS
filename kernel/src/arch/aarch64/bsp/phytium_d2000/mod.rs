@@ -11,8 +11,8 @@ pub mod mmio {
     pub const RAM_BASE: usize = 0x8000_0000;
 
     /// 用户程序加载地址（与 user/src/linker.ld 中的 BASE_ADDRESS 一致）
-    /// 用户空间位于低地址
-    pub const APP_BASE_ADDRESS: usize = 0x8000_0000;
+    /// 用户空间位于内核之后
+    pub const APP_BASE_ADDRESS: usize = 0x8010_0000;
 
     /// 内核加载地址，与链接脚本 linker.lds.S 保持一致
     /// 内核空间位于高地址
