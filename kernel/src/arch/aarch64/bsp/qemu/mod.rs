@@ -9,13 +9,16 @@ pub mod mmio {
     /// 物理内存（RAM）起始地址
     pub const RAM_BASE: usize = 0x4000_0000;
 
-    /// 用户程序加载地址（与 user/src/linker.ld 中的 BASE_ADDRESS 一致）
-    /// 用户空间位于内核之后
-    pub const APP_BASE_ADDRESS: usize = 0x4010_0000;
-
     /// 内核加载地址，与链接脚本 linker.lds.S 保持一致
-    /// 内核空间位于高地址
     pub const KERNEL_BASE: usize = 0x4008_0000;
+
+    /// 内核预留大小（包括代码、数据、BSS 和栈）
+    /// 应用加载地址 = KERNEL_BASE + KERNEL_RESERVED_SIZE = 0x40100000
+    pub const KERNEL_RESERVED_SIZE: usize = 0x0008_0000;  // 512 KB
+
+    /// 用户程序加载地址（与 user/src/linker.ld 中的 BASE_ADDRESS 一致）
+    /// 派生自 KERNEL_BASE + KERNEL_RESERVED_SIZE，确保不与内核重叠
+    pub const APP_BASE_ADDRESS: usize = KERNEL_BASE + KERNEL_RESERVED_SIZE;
 
     /// PL011 UART 参考时钟频率（Hz）
     /// QEMU virt 板固定为 24MHz（见 QEMU hw/arm/virt.c pl011_create）

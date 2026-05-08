@@ -4,27 +4,23 @@
  * 每个用户程序独立链接，加载到平台特定的基地址。
  * 内核负责将程序加载到此地址并跳转执行。
  *
+ * APP_BASE_ADDRESS 由 build.rs 根据平台计算：
+ *   APP_BASE_ADDRESS = KERNEL_BASE + KERNEL_RESERVED_SIZE
+ *
  * 内存布局（从低到高）：
- *   BASE_ADDRESS    .text          代码段（入口 _start 在最前）
- *                   .rodata        只读数据段（页对齐）
- *                   .data          已初始化全局变量（页对齐）
- *                   .bss           未初始化全局变量（运行时清零，页对齐）
+ *   APP_BASE_ADDRESS    .text          代码段（入口 _start 在最前）
+ *                       .rodata        只读数据段（页对齐）
+ *                       .data          已初始化全局变量（页对齐）
+ *                       .bss           未初始化全局变量（运行时清零，页对齐）
  *   栈：由内核在加载时分配，SP 指向用户栈顶
  * ============================================================ */
 
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
-#ifdef PHYTIUM_D2000
-BASE_ADDRESS = 0x80100000;
-#else
-/* QEMU_VIRT (default) */
-BASE_ADDRESS = 0x40100000;
-#endif
-
 SECTIONS
 {
-    . = BASE_ADDRESS;
+    . = APP_BASE_ADDRESS;
 
     /* 代码段：_start 必须位于最开头，确保跳转入口正确 */
     .text : {
