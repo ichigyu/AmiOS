@@ -17,5 +17,6 @@ fn panic(info: &PanicInfo) -> ! {
     } else {
         println!("[user panic]: {}", info.message());
     }
-    sys_exit(1)
+    sys_exit(1);
+    loop {}
 }
