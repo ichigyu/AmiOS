@@ -28,11 +28,10 @@ pub fn init() {
 /// 陷阱上下文：与 trap.S 中 SAVE_ALL/RESTORE_ALL 的栈布局严格对应
 ///
 /// 布局（从低地址到高地址，每项 8 字节）：
-///   [0..30]  x0-x29
-///   [30]     x30 (lr)
-///   [31]     sp（异常前）
+///   [0..31]  x0-x30（31 个通用寄存器）
+///   [31]     sp（异常前的栈指针）
 ///   [32]     elr_el1（异常返回地址，即 svc 后的下一条指令）
-///   [33]     spsr_el1
+///   [33]     spsr_el1（异常前的处理器状态）
 #[repr(C)]
 pub struct TrapContext {
     pub x: [usize; 31],  // x0-x30

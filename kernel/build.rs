@@ -1,7 +1,6 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 fn main() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -11,29 +10,25 @@ fn main() {
     // 用户程序列表（与 user/Cargo.toml 中的 [[bin]] 对应）
     let apps = ["hello_world", "store_fault", "power_off"];
 
-    // 用户程序 ELF 由 Makefile 的 build-user 目标预先编译好
-    // build.rs 只负责 objcopy 和生成 app_list.rs，不调用 cargo build
-    // （在 Cargo 持有 workspace 锁期间调用 cargo 会死锁）
-    let user_elf_dir = workspace_root.join("target/aarch64-unknown-none/release");
+    // 用户程序 .bin 由 Makefile 的 build-user 目标预先生成
+    // build.rs 只负责复制到 OUT_DIR 并生成 app_list.rs，不重复 objcopy
+    let user_bin_dir = workspace_root.join("target/aarch64-unknown-none/release");
 
     for app in &apps {
-        let elf = user_elf_dir.join(app);
+        let src_bin = user_bin_dir.join(format!("{}.bin", app));
         assert!(
-            elf.exists(),
-            "user app '{}' not found at {}. Run `make build-user` first.",
+            src_bin.exists(),
+            "user app binary '{}' not found at {}. Run `make build-user` first.",
             app,
-            elf.display()
+            src_bin.display()
         );
 
-        let bin = out_dir.join(format!("{}.bin", app));
-        let status = Command::new("rust-objcopy")
-            .args(["-O", "binary", elf.to_str().unwrap(), bin.to_str().unwrap()])
-            .status()
-            .expect("rust-objcopy not found");
-        assert!(status.success(), "objcopy failed for {}", app);
+        let dst_bin = out_dir.join(format!("{}.bin", app));
+        fs::copy(&src_bin, &dst_bin)
+            .expect(&format!("failed to copy {}", app));
 
-        // ELF 变化时重新运行 build.rs
-        println!("cargo:rerun-if-changed={}", elf.display());
+        // .bin 变化时重新运行 build.rs
+        println!("cargo:rerun-if-changed={}", src_bin.display());
     }
 
     // 生成 app_list.rs：APP_NAMES 和 APP_BINARIES 两个常量
