@@ -24,5 +24,9 @@ pub use arch::aarch64::bsp;
 pub use arch::aarch64::psci;
 // 硬件驱动层
 pub mod drivers;
+// 系统调用分发
+pub mod syscall;
+// 用户程序批处理加载器
+pub mod batch;
 // 内核核心基础设施（panic handler、kernel_main、print! 宏）
 mod kernel;

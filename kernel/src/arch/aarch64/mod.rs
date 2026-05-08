@@ -9,3 +9,4 @@
 mod boot;
 pub mod bsp;
 pub mod psci;
+pub mod trap;

@@ -5,3 +5,7 @@ version = 4
 [[package]]
 name = "amios-kernel"
 version = "0.1.0"
+
+[[package]]
+name = "amios-user"
+version = "0.1.0"
