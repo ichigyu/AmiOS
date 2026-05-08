@@ -46,9 +46,18 @@ impl AppManager {
         // SAFETY: bin 来自 include_bytes!，指针有效；dst 指向已知可写的 RAM 区域
         core::ptr::copy_nonoverlapping(bin.as_ptr(), dst, bin.len());
 
+        // 为应用分配栈空间：在应用代码之后 1MB 处
+        let app_stack_top = APP_BASE_ADDRESS + 0x10_0000;
+
         // SAFETY: APP_BASE_ADDRESS 处已写入合法的用户程序二进制，入口为 _start
-        let entry: extern "C" fn() -> ! = core::mem::transmute(APP_BASE_ADDRESS);
-        entry()
+        // 使用内联汇编设置 sp 并跳转到应用入口
+        core::arch::asm!(
+            "mov sp, {stack_top}",
+            "br {entry}",
+            stack_top = in(reg) app_stack_top,
+            entry = in(reg) APP_BASE_ADDRESS,
+            options(noreturn)
+        );
     }
 
     pub fn app_count(&self) -> usize {
