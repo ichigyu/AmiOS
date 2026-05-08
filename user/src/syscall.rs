@@ -39,9 +39,8 @@ pub fn sys_write(fd: usize, buf: &[u8]) -> isize {
 }
 
 /// 退出当前进程
-pub fn sys_exit(exit_code: i32) -> ! {
-    syscall(SYS_EXIT, [exit_code as usize, 0, 0]);
-    unreachable!("sys_exit returned")
+pub fn sys_exit(exit_code: i32) -> isize {
+    syscall(SYS_EXIT, [exit_code as usize, 0, 0])
 }
 
 /// 关闭系统（自定义 syscall，内核通过 PSCI 实现）

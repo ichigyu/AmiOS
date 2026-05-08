@@ -48,11 +48,11 @@ fn sys_write(fd: usize, buf: *const u8, len: usize) -> isize {
     }
 }
 
-/// 进程退出：当前阶段直接关机（批处理系统只有一个应用）
-fn sys_exit(exit_code: i32) -> ! {
+/// 进程退出：返回到内核，由内核加载下一个应用
+fn sys_exit(exit_code: i32) -> isize {
     use crate::println;
     println!("[syscall] sys_exit({})", exit_code);
-    crate::psci::system_off()
+    0
 }
 
 /// 系统关机

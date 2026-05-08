@@ -4,6 +4,7 @@
 //! 用户程序链接到 `APP_BASE_ADDRESS`，内核加载时直接 memcpy 到此地址。
 
 use crate::println;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 // 引入 build.rs 生成的应用列表（APP_NAMES, APP_BINARIES）
 include!(concat!(env!("OUT_DIR"), "/app_list.rs"));
@@ -11,6 +12,9 @@ include!(concat!(env!("OUT_DIR"), "/app_list.rs"));
 /// 用户程序加载地址（与 user/src/linker.ld 中的 BASE_ADDRESS 一致）
 /// 从 BSP 获取平台特定的应用基地址
 const APP_BASE_ADDRESS: usize = crate::bsp::mmio::APP_BASE_ADDRESS;
+
+/// 当前应用索引（原子操作，供 trap_handler 更新）
+static CURRENT_APP_INDEX: AtomicUsize = AtomicUsize::new(0);
 
 pub struct AppManager;
 
@@ -31,7 +35,7 @@ impl AppManager {
     /// - `index` 在有效范围内
     /// - APP_BASE_ADDRESS 处的内存可写且足够大
     /// - 跳转后内核栈不会被用户程序破坏（后续需要隔离）
-    pub unsafe fn load_and_run(&self, index: usize) -> ! {
+    pub unsafe fn load_and_run(&self, index: usize) {
         assert!(index < APP_NAMES.len(), "app index out of range");
 
         let bin = APP_BINARIES[index];
@@ -79,7 +83,6 @@ impl AppManager {
             "br {entry}",
             stack_top = in(reg) app_stack_top,
             entry = in(reg) APP_BASE_ADDRESS,
-            options(noreturn)
         );
     }
 
@@ -120,6 +123,16 @@ impl AppManager {
 
     pub fn app_count(&self) -> usize {
         APP_NAMES.len()
+    }
+
+    /// 获取当前应用索引
+    pub fn current_app_index() -> usize {
+        CURRENT_APP_INDEX.load(Ordering::SeqCst)
+    }
+
+    /// 设置当前应用索引
+    pub fn set_current_app_index(index: usize) {
+        CURRENT_APP_INDEX.store(index, Ordering::SeqCst);
     }
 }
 

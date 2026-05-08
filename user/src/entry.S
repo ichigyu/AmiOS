@@ -14,5 +14,5 @@ _start:
     mov     x0, #0
     mov     x8, #93        /* SYS_EXIT = 93 */
     svc     #0
-    /* 不应到达此处 */
+    /* sys_exit 返回后进入无限循环 */
 1:  b       1b

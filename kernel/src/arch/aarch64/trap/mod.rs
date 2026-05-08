@@ -88,6 +88,25 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
             println!("[trap] SVC: syscall_id={}, x0={:#x}, x1={:#x}, x2={:#x}",
                 ctx.x[8], ctx.x[0], ctx.x[1], ctx.x[2]);
             println!("[trap] SVC: sp={:#x}, elr={:#x}, EL={}", ctx.sp, ctx.elr, el);
+
+            // 检测 sys_exit (syscall id = 93)
+            if ctx.x[8] == 93 {
+                println!("[trap] sys_exit detected, loading next app");
+                let mgr = &crate::batch::APP_MANAGER;
+                let next_index = crate::batch::AppManager::current_app_index() + 1;
+
+                if next_index >= mgr.app_count() {
+                    println!("[trap] all apps finished, shutting down");
+                    crate::psci::system_off();
+                }
+
+                println!("[trap] loading app {}", next_index);
+                crate::batch::AppManager::set_current_app_index(next_index);
+
+                // 加载下一个应用
+                unsafe { mgr.load_and_run(next_index) }
+            }
+
             let ret = crate::syscall::syscall(
                 ctx.x[8],
                 [ctx.x[0], ctx.x[1], ctx.x[2]],

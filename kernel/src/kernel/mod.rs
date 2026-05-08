@@ -69,5 +69,15 @@ pub extern "C" fn kernel_main() -> ! {
 
     let mgr = &crate::batch::APP_MANAGER;
     mgr.list_apps();
-    unsafe { mgr.load_and_run(0) }
+
+    let mut app_index = 0;
+    loop {
+        if app_index >= mgr.app_count() {
+            println!("[kernel] all apps finished, shutting down");
+            psci::system_off();
+        }
+        println!("[kernel] loading app {}", app_index);
+        unsafe { mgr.load_and_run(app_index) }
+        app_index += 1;
+    }
 }
