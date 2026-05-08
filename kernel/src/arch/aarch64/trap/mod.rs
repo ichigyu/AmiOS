@@ -58,17 +58,18 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
             use crate::println;
             println!("[trap] SVC: syscall_id={}, x0={:#x}, x1={:#x}, x2={:#x}",
                 ctx.x[8], ctx.x[0], ctx.x[1], ctx.x[2]);
+            println!("[trap] SVC: sp={:#x}, elr={:#x}", ctx.sp, ctx.elr);
             let ret = crate::syscall::syscall(
                 ctx.x[8],
                 [ctx.x[0], ctx.x[1], ctx.x[2]],
             );
             ctx.x[0] = ret as usize;
-            println!("[trap] SVC return: x0={:#x}", ctx.x[0]);
+            println!("[trap] SVC return: x0={:#x}, sp={:#x}", ctx.x[0], ctx.sp);
         }
         _ => {
             use crate::println;
             println!("[trap] unhandled sync exception: EC={:#x} ESR={:#x}", ec, esr);
-            println!("[trap] ELR={:#x}, SPSR={:#x}", ctx.elr, ctx.spsr);
+            println!("[trap] ELR={:#x}, SPSR={:#x}, SP={:#x}", ctx.elr, ctx.spsr, ctx.sp);
             crate::psci::system_off();
         }
     }
