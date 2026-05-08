@@ -55,16 +55,38 @@ pub extern "C" fn trap_handler(ctx: &mut TrapContext) {
     match ec {
         0x15 => {
             // SVC（AArch64）：x8 = syscall 号，x0-x2 = 参数，返回值写回 x0
+            use crate::println;
+            println!("[trap] SVC: syscall_id={}, x0={:#x}, x1={:#x}, x2={:#x}",
+                ctx.x[8], ctx.x[0], ctx.x[1], ctx.x[2]);
             let ret = crate::syscall::syscall(
                 ctx.x[8],
                 [ctx.x[0], ctx.x[1], ctx.x[2]],
             );
             ctx.x[0] = ret as usize;
+            println!("[trap] SVC return: x0={:#x}", ctx.x[0]);
         }
         _ => {
             use crate::println;
             println!("[trap] unhandled sync exception: EC={:#x} ESR={:#x}", ec, esr);
+            println!("[trap] ELR={:#x}, SPSR={:#x}", ctx.elr, ctx.spsr);
             crate::psci::system_off();
+        }
+    }
+}
+
+/// 调试打印函数（供汇编调用）
+/// 接收一个字符串指针（x0）并打印
+#[no_mangle]
+pub extern "C" fn debug_print(msg: *const u8) {
+    use crate::println;
+    // SAFETY: 调用者保证 msg 指向有效的 null-terminated 字符串
+    unsafe {
+        let mut len = 0;
+        while *msg.add(len) != 0 {
+            len += 1;
+        }
+        if let Ok(s) = core::str::from_utf8(core::slice::from_raw_parts(msg, len)) {
+            println!("[asm] {}", s);
         }
     }
 }
